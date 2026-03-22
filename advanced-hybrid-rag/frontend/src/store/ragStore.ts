@@ -91,6 +91,9 @@ export const useRAGStore = create<RAGState>((set, get) => ({
 			queryId: data.query_id,
 			reasoningTrace: data.reasoning_trace,
 			warnings: data.warnings,
+			correctiveIterations: data.corrective_iterations,
+			retrievalQuality: data.retrieval_quality,
+			groundingScore: data.grounding_score,
 		};
 		set({
 			messages: [...get().messages, assistantMessage],
@@ -135,6 +138,9 @@ export const useRAGStore = create<RAGState>((set, get) => ({
 			queryId: response?.query_id,
 			reasoningTrace: response?.reasoning_trace,
 			warnings: response?.warnings,
+			correctiveIterations: response?.corrective_iterations,
+			retrievalQuality: response?.retrieval_quality,
+			groundingScore: response?.grounding_score,
 		};
 		set({
 			messages: items,

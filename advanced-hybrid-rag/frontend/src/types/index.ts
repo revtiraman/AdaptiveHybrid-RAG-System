@@ -8,6 +8,9 @@ export interface Message {
 	queryId?: string;
 	reasoningTrace?: string[];
 	warnings?: string[];
+	correctiveIterations?: number;
+	retrievalQuality?: number;
+	groundingScore?: number;
 	rating?: "up" | "down";
 }
 
