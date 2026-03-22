@@ -49,6 +49,10 @@ async def query(request: Request, body: QueryBody):
 	answer_generator = services["answer_generator"]
 	verifier = services["verifier"]
 	embedder = services["embedder"]
+	quality_scorer = services.get("quality_scorer")
+	adaptive_controller = services.get("adaptive_controller")
+	corrective_rag = services.get("corrective_rag")
+	settings = services.get("settings")
 	planner = getattr(request.app.state, "query_planning_agent", None)
 
 	analysis = analyzer.analyze(body.query)
@@ -59,30 +63,94 @@ async def query(request: Request, body: QueryBody):
 			reasoning_trace.extend([f"plan:{s.action}" for s in plan_result.steps])
 		except Exception:
 			reasoning_trace.append("plan:failed")
-	query_emb = embedder.embed_query(body.query)
-	retrieval = await retrieval_engine.retrieve(
-		query=body.query,
-		query_embedding=query_emb,
-		k_final=body.options.max_sources,
-		filters=services["retrieval_filters_model"](**body.filters.model_dump()),
+	async def _run_cycle(
+		active_query: str,
+		use_hyde: bool,
+		use_graph: bool,
+		use_colbert: bool,
+		trace: list[str],
+	):
+		active_embedding = embedder.embed_query(active_query)
+		retrieval = await retrieval_engine.retrieve(
+			query=active_query,
+			query_embedding=active_embedding,
+			k_final=body.options.max_sources,
+			filters=services["retrieval_filters_model"](**body.filters.model_dump()),
+			use_hyde=use_hyde,
+			use_graph=use_graph,
+			use_colbert=use_colbert,
+		)
+
+		response = await answer_generator.generate(
+			query=body.query,
+			analysis=analysis,
+			chunks=retrieval.chunks,
+			reasoning_trace=trace,
+		)
+		response.retrieval_quality = sum(retrieval.retrieval_scores.values()) / max(1, len(retrieval.retrieval_scores))
+
+		verification = None
+		if body.options.enable_verification:
+			verification = await verifier.verify(body.query, response.answer, retrieval.chunks)
+			response.grounding_score = verification.grounding_score
+			if not verification.passed:
+				response.warnings.extend([i.detail for i in verification.issues])
+
+		return retrieval, response, verification, active_embedding
+
+	retrieval, response, verify, query_emb = await _run_cycle(
+		active_query=body.query,
 		use_hyde=body.options.use_hyde,
 		use_graph=body.options.use_graph,
 		use_colbert=body.options.use_colbert,
+		trace=reasoning_trace + ["retrieve", "generate"],
 	)
 
-	response = await answer_generator.generate(
-		query=body.query,
-		analysis=analysis,
-		chunks=retrieval.chunks,
-		reasoning_trace=reasoning_trace + ["retrieve", "generate"],
+	adaptive_cfg = getattr(settings, "adaptive", None)
+	adaptive_allowed = bool(
+		body.options.enable_adaptive
+		and adaptive_cfg is not None
+		and adaptive_cfg.adaptive_enabled
+		and quality_scorer is not None
+		and adaptive_controller is not None
 	)
-	response.retrieval_quality = sum(retrieval.retrieval_scores.values()) / max(1, len(retrieval.retrieval_scores))
 
-	if body.options.enable_verification:
-		verify = await verifier.verify(body.query, response.answer, retrieval.chunks)
-		response.grounding_score = verify.grounding_score
-		if not verify.passed:
-			response.warnings.extend([i.detail for i in verify.issues])
+	if adaptive_allowed:
+		max_retries = max(0, int(adaptive_cfg.max_corrective_retries))
+		quality_threshold = float(adaptive_cfg.quality_threshold)
+
+		for attempt in range(1, max_retries + 1):
+			quality = quality_scorer.score(body.query, query_emb, retrieval.chunks)
+			verification_passed = verify is None or verify.passed
+			if quality.overall_quality >= quality_threshold and verification_passed:
+				break
+
+			params = await adaptive_controller.optimize_retrieval(
+				query=body.query,
+				initial_results=retrieval,
+				quality=quality,
+				attempt=attempt,
+			)
+
+			retrieval, response, verify, query_emb = await _run_cycle(
+				active_query=params.query,
+				use_hyde=body.options.use_hyde or params.use_hyde,
+				use_graph=body.options.use_graph and params.use_graph,
+				use_colbert=body.options.use_colbert or params.use_colbert,
+				trace=reasoning_trace + [f"adaptive_retry={attempt}", "retrieve", "generate"],
+			)
+			response.corrective_iterations = attempt
+			response.warnings.append(f"Adaptive retry attempt {attempt} applied.")
+
+	if adaptive_allowed and corrective_rag is not None and verify is not None and not verify.passed and verify.corrective_action != "none":
+		corrected = await corrective_rag.run(body.query, response.model_dump(), retrieval.chunks)
+		if isinstance(corrected.get("answer"), str) and corrected["answer"].strip() and corrected["answer"] != response.answer:
+			response.answer = corrected["answer"]
+			response.answer_summary = (response.answer[:180] + "...") if len(response.answer) > 180 else response.answer
+			response.corrective_iterations += 1
+		response.warnings = list(dict.fromkeys(corrected.get("warnings", response.warnings)))
+		if isinstance(corrected.get("corrective_labels"), dict):
+			response.warnings.append(f"Corrective labels: {corrected['corrective_labels']}")
 
 	return response.model_dump()
 

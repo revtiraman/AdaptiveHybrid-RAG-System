@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -24,7 +25,15 @@ from .api.routes.papers import router as papers_router
 from .api.routes.planning import router as planning_router
 from .api.routes.query import router as query_router
 from .api.websocket import router as websocket_router
+from .adaptive.adaptive_controller import AdaptiveRetrievalController
+from .adaptive.corrective_rag import CorrectiveRAG
 from .adaptive.feedback_learner import FeedbackLearner
+from .adaptive.quality_scorer import RetrievalQualityScorer
+
+try:
+    from .config.settings import get_settings
+except Exception:  # pragma: no cover - optional dependency guard for lean test envs
+    get_settings = None
 from .ingestion.arxiv_monitor import ArxivMonitor
 from .ingestion.embedder import BGEEmbedder
 from .ingestion.pipeline import IngestionPipeline
@@ -46,6 +55,17 @@ from .storage.vector_store import ChromaDBStore
 
 
 def _configure_app_state(app: FastAPI) -> None:
+    settings = None
+    if get_settings is not None:
+        try:
+            settings = get_settings()
+        except Exception:
+            settings = None
+    if settings is None:
+        settings = SimpleNamespace(
+            retrieval=SimpleNamespace(k_final=5),
+            adaptive=SimpleNamespace(adaptive_enabled=True, max_corrective_retries=3, quality_threshold=0.65),
+        )
     embedder = BGEEmbedder()
     vector_store = ChromaDBStore()
     bm25_store = BM25Store()
@@ -75,6 +95,41 @@ def _configure_app_state(app: FastAPI) -> None:
         graph_retriever=GraphRetriever(graph_store),
     )
 
+    analyzer = QueryAnalyzer()
+    answer_generator = AnswerGenerator()
+    verifier = SelfVerifier()
+    adaptive_controller = AdaptiveRetrievalController()
+    quality_scorer = RetrievalQualityScorer()
+
+    async def _refine_retrieval(query: str, bad_chunks):
+        _ = bad_chunks
+        query_embedding = embedder.embed_query(query)
+        refined = await retrieval_engine.retrieve(
+            query=query,
+            query_embedding=query_embedding,
+            k_final=max(settings.retrieval.k_final, 8),
+            filters=RetrievalFilters(),
+            use_hyde=True,
+            use_graph=True,
+            use_colbert=True,
+        )
+        return refined.chunks
+
+    async def _regenerate_answer(query: str, chunks):
+        analysis = analyzer.analyze(query)
+        regenerated = await answer_generator.generate(
+            query=query,
+            analysis=analysis,
+            chunks=chunks,
+            reasoning_trace=["corrective", "regenerate"],
+        )
+        return regenerated.model_dump()
+
+    corrective_rag = CorrectiveRAG(
+        regenerate_answer=_regenerate_answer,
+        refine_retrieval=_refine_retrieval,
+    )
+
     app.state.embedder = embedder
     app.state.vector_store = vector_store
     app.state.bm25_store = bm25_store
@@ -83,6 +138,7 @@ def _configure_app_state(app: FastAPI) -> None:
     app.state.cache_store = cache_store
     app.state.pipeline = pipeline
     app.state.retrieval_engine = retrieval_engine
+    app.state.settings = settings
     app.state.feedback_learner = feedback_learner
     app.state.annotation_store = annotation_store
     app.state.arxiv_monitor = arxiv_monitor
@@ -90,9 +146,13 @@ def _configure_app_state(app: FastAPI) -> None:
     app.state.query_planning_agent = query_planning_agent
     app.state.services = {
         "embedder": embedder,
-        "analyzer": QueryAnalyzer(),
-        "answer_generator": AnswerGenerator(),
-        "verifier": SelfVerifier(),
+        "analyzer": analyzer,
+        "answer_generator": answer_generator,
+        "verifier": verifier,
+        "quality_scorer": quality_scorer,
+        "adaptive_controller": adaptive_controller,
+        "corrective_rag": corrective_rag,
+        "settings": settings,
         "retrieval_engine": retrieval_engine,
         "retrieval_filters_model": RetrievalFilters,
     }
