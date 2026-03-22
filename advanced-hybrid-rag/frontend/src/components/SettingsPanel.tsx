@@ -21,6 +21,15 @@ export default function SettingsPanel() {
 				/>
 				ColBERT
 			</label>
+			<br />
+			<label>
+				<input
+					type="checkbox"
+					checked={Boolean(settings.enable_planning)}
+					onChange={(e) => updateSettings({ enable_planning: e.target.checked })}
+				/>
+				Planning Agent
+			</label>
 			<div style={{ marginTop: 8 }}>
 				<label>
 					Max Sources

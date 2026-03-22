@@ -1,6 +1,14 @@
 import { create } from "zustand";
 
-import type { DocumentItem, EvalResults, GraphData, Message, RAGSettings } from "../types";
+import type {
+	DocumentItem,
+	EvalResults,
+	FeedbackStats,
+	GraphData,
+	Message,
+	PlannerStep,
+	RAGSettings,
+} from "../types";
 
 interface RAGState {
 	messages: Message[];
@@ -10,17 +18,30 @@ interface RAGState {
 	currentQuery: string;
 	evaluationResults: EvalResults | null;
 	graphData: GraphData | null;
+	planningSteps: PlannerStep[];
+	literatureReview: string | null;
+	feedbackStats: FeedbackStats | null;
+	arxivItems: Array<{ title: string; category: string; fetched_at: string }>;
+	annotationsByDoc: Record<string, Array<{ chunk_id: string; label: string; note: string; user_id: string; public: boolean }>>;
 	sendQuery: (query: string) => Promise<void>;
-	uploadDocument: (file: File) => Promise<void>;
+	uploadDocument: (file: File, redactPII?: boolean) => Promise<void>;
 	deleteDocument: (docId: string) => Promise<void>;
 	updateSettings: (partial: Partial<RAGSettings>) => void;
-	rateMessage: (messageId: string, rating: "up" | "down") => void;
+	rateMessage: (messageId: string, rating: "up" | "down") => Promise<void>;
+	runPlanning: (query: string) => Promise<void>;
+	generateLiteratureReview: (topic: string) => Promise<void>;
+	refreshFeedbackStats: () => Promise<void>;
+	pollArxiv: () => Promise<void>;
+	configureArxiv: (categories: string[], keywords: string[]) => Promise<void>;
+	createAnnotation: (documentId: string, chunkId: string, note: string, label?: string) => Promise<void>;
+	loadAnnotations: (documentId: string) => Promise<void>;
 }
 
 const defaultSettings: RAGSettings = {
 	use_hyde: false,
 	use_graph: true,
 	use_colbert: false,
+	enable_planning: false,
 	max_sources: 5,
 };
 
@@ -32,6 +53,11 @@ export const useRAGStore = create<RAGState>((set, get) => ({
 	currentQuery: "",
 	evaluationResults: null,
 	graphData: null,
+	planningSteps: [],
+	literatureReview: null,
+	feedbackStats: null,
+	arxivItems: [],
+	annotationsByDoc: {},
 
 	sendQuery: async (query: string) => {
 		const userMessage: Message = { id: crypto.randomUUID(), role: "user", content: query };
@@ -54,14 +80,24 @@ export const useRAGStore = create<RAGState>((set, get) => ({
 			role: "assistant",
 			content: data.answer ?? "No answer returned.",
 			citations: data.citations,
+			queryId: data.query_id,
+			reasoningTrace: data.reasoning_trace,
+			warnings: data.warnings,
 		};
-		set({ messages: [...get().messages, assistantMessage], isStreaming: false });
+		set({
+			messages: [...get().messages, assistantMessage],
+			planningSteps: data.reasoning_trace
+				? data.reasoning_trace.map((entry: string) => ({ thought: "", action: entry, observation: "" }))
+				: get().planningSteps,
+			isStreaming: false,
+		});
 	},
 
-	uploadDocument: async (file: File) => {
+	uploadDocument: async (file: File, redactPII = true) => {
 		const formData = new FormData();
 		formData.append("file", file);
-		const res = await fetch("/api/ingest", { method: "POST", body: formData });
+		const ingestPath = `/api/ingest?redact_pii=${redactPII ? "true" : "false"}`;
+		const res = await fetch(ingestPath, { method: "POST", body: formData });
 		const data = await res.json();
 		set({ documents: [{ doc_id: data.doc_id, title: file.name }, ...get().documents] });
 	},
@@ -75,9 +111,95 @@ export const useRAGStore = create<RAGState>((set, get) => ({
 		set({ settings: { ...get().settings, ...partial } });
 	},
 
-	rateMessage: (messageId: string, rating: "up" | "down") => {
+	rateMessage: async (messageId: string, rating: "up" | "down") => {
+		const target = get().messages.find((m) => m.id === messageId && m.role === "assistant");
 		set({
 			messages: get().messages.map((m) => (m.id === messageId ? { ...m, rating } : m)),
+		});
+
+		if (!target?.queryId) {
+			return;
+		}
+
+		await fetch("/api/feedback/", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				query_id: target.queryId,
+				answer: target.content,
+				rating: rating === "up" ? 5 : 1,
+				helpful: rating === "up",
+				bad_citation_ids: [],
+			}),
+		});
+		await get().refreshFeedbackStats();
+	},
+
+	runPlanning: async (query: string) => {
+		const res = await fetch("/api/planning/react", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ query }),
+		});
+		const data = await res.json();
+		set({ planningSteps: data.steps ?? [] });
+	},
+
+	generateLiteratureReview: async (topic: string) => {
+		const papers = get().documents.slice(0, 5).map((d) => ({
+			title: d.title || d.doc_id,
+			summary: `Indexed source: ${d.doc_id}`,
+			cluster: "general",
+		}));
+		const res = await fetch("/api/literature/review", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ topic, papers }),
+		});
+		const data = await res.json();
+		set({ literatureReview: data.review ?? null });
+	},
+
+	refreshFeedbackStats: async () => {
+		const res = await fetch("/api/feedback/stats");
+		if (!res.ok) return;
+		const data = await res.json();
+		set({ feedbackStats: data });
+	},
+
+	pollArxiv: async () => {
+		const res = await fetch("/api/monitor/arxiv/poll", { method: "POST" });
+		if (!res.ok) return;
+		const data = await res.json();
+		set({ arxivItems: data.items ?? [] });
+	},
+
+	configureArxiv: async (categories: string[], keywords: string[]) => {
+		await fetch("/api/monitor/arxiv/config", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ categories, keywords }),
+		});
+	},
+
+	createAnnotation: async (documentId: string, chunkId: string, note: string, label = "general") => {
+		await fetch("/api/annotations", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ document_id: documentId, chunk_id: chunkId, note, label }),
+		});
+		await get().loadAnnotations(documentId);
+	},
+
+	loadAnnotations: async (documentId: string) => {
+		const res = await fetch(`/api/annotations/${documentId}`);
+		if (!res.ok) return;
+		const data = await res.json();
+		set({
+			annotationsByDoc: {
+				...get().annotationsByDoc,
+				[documentId]: data.annotations ?? [],
+			},
 		});
 	},
 }));

@@ -5,6 +5,9 @@ export interface Message {
 	role: Role;
 	content: string;
 	citations?: Array<{ chunk_id: string; doc_id: string }>;
+	queryId?: string;
+	reasoningTrace?: string[];
+	warnings?: string[];
 	rating?: "up" | "down";
 }
 
@@ -18,8 +21,21 @@ export interface RAGSettings {
 	use_hyde: boolean;
 	use_graph: boolean;
 	use_colbert: boolean;
+	enable_planning?: boolean;
 	max_sources: number;
 	model?: string;
+}
+
+export interface PlannerStep {
+	thought: string;
+	action: string;
+	observation: string;
+}
+
+export interface FeedbackStats {
+	total_feedback: number;
+	hard_negatives: number;
+	high_quality: number;
 }
 
 export interface GraphData {

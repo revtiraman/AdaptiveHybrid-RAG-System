@@ -1,3 +1,4 @@
+import AdvancedActionsPanel from "./components/AdvancedActionsPanel";
 import ChatInterface from "./components/ChatInterface";
 import CitationViewer from "./components/CitationViewer";
 import DocumentUpload from "./components/DocumentUpload";
@@ -18,6 +19,7 @@ export default function App() {
 					<div style={{ display: "grid", gap: 16 }}>
 						<DocumentUpload />
 						<SettingsPanel />
+						<AdvancedActionsPanel />
 						<EvalDashboard />
 					</div>
 					<div style={{ display: "grid", gap: 16 }}>

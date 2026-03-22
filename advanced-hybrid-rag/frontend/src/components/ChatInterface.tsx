@@ -21,10 +21,11 @@ export default function ChatInterface() {
 				{messages.map((m) => (
 					<div key={m.id} style={{ marginBottom: 10 }}>
 						<strong>{m.role === "user" ? "You" : "Assistant"}:</strong> {m.content}
+						{m.warnings && m.warnings.length > 0 && <div style={{ color: "#9c3f00", marginTop: 4 }}>Warnings: {m.warnings.join(" | ")}</div>}
 						{m.role === "assistant" && (
 							<span style={{ marginLeft: 8 }}>
-								<button onClick={() => rateMessage(m.id, "up")}>+</button>
-								<button onClick={() => rateMessage(m.id, "down")} style={{ marginLeft: 4 }}>
+								<button onClick={() => void rateMessage(m.id, "up")}>+</button>
+								<button onClick={() => void rateMessage(m.id, "down")} style={{ marginLeft: 4 }}>
 									-
 								</button>
 							</span>
