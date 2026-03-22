@@ -1,11 +1,23 @@
+import { Suspense, lazy } from "react";
+
 import AdvancedActionsPanel from "./components/AdvancedActionsPanel";
 import ChatInterface from "./components/ChatInterface";
 import CitationViewer from "./components/CitationViewer";
 import DocumentUpload from "./components/DocumentUpload";
-import EvalDashboard from "./components/EvalDashboard";
-import GraphViewer from "./components/GraphViewer";
-import ReasoningTrace from "./components/ReasoningTrace";
 import SettingsPanel from "./components/SettingsPanel";
+
+const EvalDashboard = lazy(() => import("./components/EvalDashboard"));
+const GraphViewer = lazy(() => import("./components/GraphViewer"));
+const ReasoningTrace = lazy(() => import("./components/ReasoningTrace"));
+
+function PanelFallback({ label }: { label: string }) {
+	return (
+		<section style={{ background: "white", borderRadius: 12, padding: 14, border: "1px solid #e5e7eb" }}>
+			<h3 style={{ marginTop: 0, marginBottom: 6 }}>{label}</h3>
+			<p style={{ margin: 0, color: "#6b7280", fontSize: 14 }}>Loading panel...</p>
+		</section>
+	);
+}
 
 export default function App() {
 	return (
@@ -20,13 +32,19 @@ export default function App() {
 						<DocumentUpload />
 						<SettingsPanel />
 						<AdvancedActionsPanel />
-						<EvalDashboard />
+						<Suspense fallback={<PanelFallback label="Evaluation" />}>
+							<EvalDashboard />
+						</Suspense>
 					</div>
 					<div style={{ display: "grid", gap: 16, alignContent: "start" }}>
 						<ChatInterface />
-						<ReasoningTrace />
+						<Suspense fallback={<PanelFallback label="Reasoning Trace" />}>
+							<ReasoningTrace />
+						</Suspense>
 						<CitationViewer />
-						<GraphViewer />
+						<Suspense fallback={<PanelFallback label="Knowledge Graph" />}>
+							<GraphViewer />
+						</Suspense>
 					</div>
 				</div>
 			</div>
