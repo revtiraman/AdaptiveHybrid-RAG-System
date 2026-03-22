@@ -8,6 +8,8 @@ export default function ChatInterface() {
 	const [query, setQuery] = useState("");
 	const { events, connect, close, connected } = useStream();
 
+	const formatScore = (value?: number) => (typeof value === "number" ? value.toFixed(2) : null);
+
 	useEffect(() => {
 		if (events.length === 0) return;
 		const evt = events[events.length - 1];
@@ -57,7 +59,36 @@ export default function ChatInterface() {
 				{messages.map((m) => (
 					<div key={m.id} style={{ marginBottom: 10 }}>
 						<strong>{m.role === "user" ? "You" : "Assistant"}:</strong> {m.content}
-						{m.warnings && m.warnings.length > 0 && <div style={{ color: "#9c3f00", marginTop: 4 }}>Warnings: {m.warnings.join(" | ")}</div>}
+						{m.role === "assistant" && (
+							<div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+								{typeof m.correctiveIterations === "number" && (
+									<span style={{ padding: "2px 8px", borderRadius: 999, background: "#fef3c7", color: "#92400e", fontSize: 12 }}>
+										retries {m.correctiveIterations}
+									</span>
+								)}
+								{formatScore(m.retrievalQuality) && (
+									<span style={{ padding: "2px 8px", borderRadius: 999, background: "#dbeafe", color: "#1e3a8a", fontSize: 12 }}>
+										quality {formatScore(m.retrievalQuality)}
+									</span>
+								)}
+								{formatScore(m.groundingScore) && (
+									<span style={{ padding: "2px 8px", borderRadius: 999, background: "#dcfce7", color: "#166534", fontSize: 12 }}>
+										grounding {formatScore(m.groundingScore)}
+									</span>
+								)}
+							</div>
+						)}
+						{m.warnings && m.warnings.length > 0 && (
+							<div style={{ color: "#9c3f00", marginTop: 6, fontSize: 12 }}>
+								Warnings:
+								<ul style={{ margin: "4px 0 0 18px", padding: 0 }}>
+									{m.warnings.slice(0, 4).map((w, idx) => (
+										<li key={`${m.id}-w-${idx}`}>{w}</li>
+									))}
+								</ul>
+								{m.warnings.length > 4 && <div>+{m.warnings.length - 4} more warnings</div>}
+							</div>
+						)}
 						{m.role === "assistant" && (
 							<span style={{ marginLeft: 8 }}>
 								<button onClick={() => void navigator.clipboard.writeText(m.content)}>Copy</button>
