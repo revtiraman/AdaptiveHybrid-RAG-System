@@ -12,3 +12,4 @@ data/documents/*.pdf
 data/chroma/
 web/node_modules/
 web/dist/
+*.egg-info/
