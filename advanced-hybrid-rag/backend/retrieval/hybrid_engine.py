@@ -79,17 +79,24 @@ class HybridRetrievalEngine:
 	) -> RetrievalResult:
 		start = time.perf_counter()
 
-		tasks = [
-			self.vector_retriever.retrieve(query_embedding=query_embedding, k=self.k_vector, filters=self._build_filter(filters)),
-			self.bm25_retriever.retrieve(query=query, k=self.k_bm25),
+		tasks: list[tuple[str, object]] = [
+			("vector", self.vector_retriever.retrieve(query_embedding=query_embedding, k=self.k_vector, filters=self._build_filter(filters))),
+			("bm25", self.bm25_retriever.retrieve(query=query, k=self.k_bm25)),
 		]
 
 		if use_graph and self.graph_retriever is not None:
-			tasks.append(self.graph_retriever.retrieve(query=query, k=self.k_graph))
+			tasks.append(("graph", self.graph_retriever.retrieve(query=query, k=self.k_graph)))
 		if use_hyde and self.hyde_retriever is not None:
-			tasks.append(self.hyde_retriever.retrieve(query=query, k=self.k_vector))
+			tasks.append(("hyde", self.hyde_retriever.retrieve(query=query, k=self.k_vector)))
 
-		results = await asyncio.gather(*tasks)
+		raw_results = await asyncio.gather(*[task for _, task in tasks], return_exceptions=True)
+		results: list[list[SearchResult]] = []
+		for (name, _), raw in zip(tasks, raw_results):
+			if isinstance(raw, Exception):
+				# Keep retrieval robust if one branch (e.g. graph backend) is unavailable.
+				_ = name
+				continue
+			results.append(raw)
 		fused = self.fusion.reciprocal_rank_fusion(results)
 		filtered = self._apply_filters(fused, filters)
 		diversified = self.fusion.enforce_diversity(filtered, max_per_doc=2)

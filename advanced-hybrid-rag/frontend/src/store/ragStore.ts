@@ -24,6 +24,10 @@ interface RAGState {
 	arxivItems: Array<{ title: string; category: string; fetched_at: string }>;
 	annotationsByDoc: Record<string, Array<{ chunk_id: string; label: string; note: string; user_id: string; public: boolean }>>;
 	sendQuery: (query: string) => Promise<void>;
+	startStreamQuery: (query: string) => void;
+	appendStreamChunk: (chunk: string) => void;
+	finalizeStreamQuery: (response: any) => void;
+	failStreamQuery: (message: string) => void;
 	uploadDocument: (file: File, redactPII?: boolean) => Promise<void>;
 	deleteDocument: (docId: string) => Promise<void>;
 	updateSettings: (partial: Partial<RAGSettings>) => void;
@@ -89,6 +93,60 @@ export const useRAGStore = create<RAGState>((set, get) => ({
 			planningSteps: data.reasoning_trace
 				? data.reasoning_trace.map((entry: string) => ({ thought: "", action: entry, observation: "" }))
 				: get().planningSteps,
+			isStreaming: false,
+		});
+	},
+
+	startStreamQuery: (query: string) => {
+		const userMessage: Message = { id: crypto.randomUUID(), role: "user", content: query };
+		const assistantMessage: Message = { id: crypto.randomUUID(), role: "assistant", content: "" };
+		set({
+			messages: [...get().messages, userMessage, assistantMessage],
+			isStreaming: true,
+			currentQuery: query,
+		});
+	},
+
+	appendStreamChunk: (chunk: string) => {
+		const items = [...get().messages];
+		const idx = [...items].reverse().findIndex((m) => m.role === "assistant");
+		if (idx === -1) return;
+		const realIdx = items.length - 1 - idx;
+		items[realIdx] = { ...items[realIdx], content: `${items[realIdx].content}${chunk}` };
+		set({ messages: items });
+	},
+
+	finalizeStreamQuery: (response: any) => {
+		const items = [...get().messages];
+		const idx = [...items].reverse().findIndex((m) => m.role === "assistant");
+		if (idx === -1) {
+			set({ isStreaming: false });
+			return;
+		}
+		const realIdx = items.length - 1 - idx;
+		items[realIdx] = {
+			...items[realIdx],
+			content: response?.answer ?? items[realIdx].content,
+			citations: response?.citations,
+			queryId: response?.query_id,
+			reasoningTrace: response?.reasoning_trace,
+			warnings: response?.warnings,
+		};
+		set({
+			messages: items,
+			planningSteps: response?.reasoning_trace
+				? response.reasoning_trace.map((entry: string) => ({ thought: "", action: entry, observation: "" }))
+				: get().planningSteps,
+			isStreaming: false,
+		});
+	},
+
+	failStreamQuery: (message: string) => {
+		set({
+			messages: [
+				...get().messages,
+				{ id: crypto.randomUUID(), role: "assistant", content: message, warnings: ["stream_error"] },
+			],
 			isStreaming: false,
 		});
 	},

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Literal
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -89,17 +89,44 @@ async def query(request: Request, body: QueryBody):
 
 @router.post("/stream")
 async def query_stream(request: Request, body: QueryBody):
-	async def event_stream():
-		yield "data: " + json.dumps({"type": "status", "message": "Retrieving..."}) + "\n\n"
-		result = await query(request, body)
-		answer = result.get("answer", "")
-		for token in answer.split():
-			yield "data: " + json.dumps({"type": "chunk", "text": token + " "}) + "\n\n"
-		for citation in result.get("citations", []):
-			yield "data: " + json.dumps({"type": "citation", "citation": citation}) + "\n\n"
-		yield "data: " + json.dumps({"type": "complete", "response": result}) + "\n\n"
+	return StreamingResponse(_event_stream(request, body), media_type="text/event-stream")
 
-	return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+@router.get("/stream")
+async def query_stream_get(
+	request: Request,
+	query: str,
+	mode: Literal["auto", "basic", "multihop", "comparison"] = "auto",
+	max_sources: int = Query(default=5, ge=1, le=20),
+	use_hyde: bool = False,
+	use_graph: bool = True,
+	use_colbert: bool = False,
+	enable_planning: bool = False,
+):
+	body = QueryBody(
+		query=query,
+		mode=mode,
+		filters=QueryFilters(),
+		options=QueryOptions(
+			max_sources=max_sources,
+			use_hyde=use_hyde,
+			use_graph=use_graph,
+			use_colbert=use_colbert,
+			enable_planning=enable_planning,
+		),
+	)
+	return StreamingResponse(_event_stream(request, body), media_type="text/event-stream")
+
+
+async def _event_stream(request: Request, body: QueryBody):
+	yield "data: " + json.dumps({"type": "status", "message": "Retrieving..."}) + "\n\n"
+	result = await query(request, body)
+	answer = result.get("answer", "")
+	for token in answer.split():
+		yield "data: " + json.dumps({"type": "chunk", "text": token + " "}) + "\n\n"
+	for citation in result.get("citations", []):
+		yield "data: " + json.dumps({"type": "citation", "citation": citation}) + "\n\n"
+	yield "data: " + json.dumps({"type": "complete", "response": result}) + "\n\n"
 
 
 __all__ = ["router", "QueryBody", "QueryFilters", "QueryOptions"]
