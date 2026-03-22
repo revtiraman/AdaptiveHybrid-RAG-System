@@ -9,15 +9,25 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
 from .api.middleware import AuthMiddleware, RequestLoggingMiddleware
+from .api.routes.analysis import router as analysis_router
+from .api.routes.annotations import router as annotations_router
 from .api.routes.eval import router as eval_router
+from .api.routes.feedback import router as feedback_router
 from .api.routes.graph import router as graph_router
 from .api.routes.health import router as health_router
 from .api.routes.ingest import router as ingest_router
+from .api.routes.literature import router as literature_router
+from .api.routes.monitor import router as monitor_router
 from .api.routes.papers import router as papers_router
+from .api.routes.planning import router as planning_router
 from .api.routes.query import router as query_router
 from .api.websocket import router as websocket_router
+from .adaptive.feedback_learner import FeedbackLearner
+from .ingestion.arxiv_monitor import ArxivMonitor
 from .ingestion.embedder import BGEEmbedder
 from .ingestion.pipeline import IngestionPipeline
+from .ingestion.privacy_processor import PrivacyProcessor
+from .reasoning.query_planning_agent import QueryPlanningAgent
 from .reasoning.answer_generator import AnswerGenerator
 from .reasoning.query_analyzer import QueryAnalyzer
 from .reasoning.self_verifier import SelfVerifier
@@ -28,6 +38,7 @@ from .retrieval.vector_retriever import VectorRetriever
 from .storage.bm25_store import BM25Store
 from .storage.cache_store import SemanticCache
 from .storage.graph_store import Neo4jGraphStore
+from .storage.annotation_store import AnnotationStore
 from .storage.relational_store import RelationalStore
 from .storage.vector_store import ChromaDBStore
 
@@ -54,6 +65,11 @@ def create_app() -> FastAPI:
         graph_store = Neo4jGraphStore()
         relational_store = RelationalStore()
         cache_store = SemanticCache(redis_url="redis://localhost:6379")
+        feedback_learner = FeedbackLearner()
+        annotation_store = AnnotationStore()
+        arxiv_monitor = ArxivMonitor()
+        privacy_processor = PrivacyProcessor()
+        query_planning_agent = QueryPlanningAgent()
 
         pipeline = IngestionPipeline(
             embedder=embedder,
@@ -79,6 +95,11 @@ def create_app() -> FastAPI:
         app.state.cache_store = cache_store
         app.state.pipeline = pipeline
         app.state.retrieval_engine = retrieval_engine
+        app.state.feedback_learner = feedback_learner
+        app.state.annotation_store = annotation_store
+        app.state.arxiv_monitor = arxiv_monitor
+        app.state.privacy_processor = privacy_processor
+        app.state.query_planning_agent = query_planning_agent
         app.state.services = {
             "embedder": embedder,
             "analyzer": QueryAnalyzer(),
@@ -94,6 +115,12 @@ def create_app() -> FastAPI:
     app.include_router(papers_router)
     app.include_router(graph_router)
     app.include_router(eval_router)
+    app.include_router(feedback_router)
+    app.include_router(annotations_router)
+    app.include_router(analysis_router)
+    app.include_router(literature_router)
+    app.include_router(planning_router)
+    app.include_router(monitor_router)
     app.include_router(websocket_router)
 
     @app.get("/api/stats")
