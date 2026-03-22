@@ -36,6 +36,12 @@ class _DummyBM25Retriever:
 		return [_result("bm25")]
 
 
+class _PassthroughReranker:
+	def rerank(self, query: str, candidates: list[SearchResult], top_k: int) -> list[SearchResult]:
+		_ = query
+		return candidates[:top_k]
+
+
 class _CountingGraphRetriever:
 	def __init__(self, should_fail: bool = False) -> None:
 		self.calls = 0
@@ -76,6 +82,7 @@ def test_graph_retriever_called_when_enabled():
 		vector_retriever=_DummyVectorRetriever(),
 		bm25_retriever=_DummyBM25Retriever(),
 		graph_retriever=graph,
+		reranker=_PassthroughReranker(),
 	)
 
 	result = asyncio.run(
@@ -99,6 +106,7 @@ def test_graph_retriever_not_called_when_disabled():
 		vector_retriever=_DummyVectorRetriever(),
 		bm25_retriever=_DummyBM25Retriever(),
 		graph_retriever=graph,
+		reranker=_PassthroughReranker(),
 	)
 
 	_ = asyncio.run(
@@ -121,6 +129,7 @@ def test_graph_failure_does_not_break_retrieval():
 		vector_retriever=_DummyVectorRetriever(),
 		bm25_retriever=_DummyBM25Retriever(),
 		graph_retriever=graph,
+		reranker=_PassthroughReranker(),
 	)
 
 	result = asyncio.run(
