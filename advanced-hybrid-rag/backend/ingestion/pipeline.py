@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Literal
@@ -30,6 +31,7 @@ class IngestionPipeline:
 		bm25_store: Any | None = None,
 		graph_store: Any | None = None,
 		cache_store: Any | None = None,
+		privacy_processor: Any | None = None,
 	) -> None:
 		self.pdf_processor = pdf_processor or PDFProcessor()
 		self.web_scraper = web_scraper or WebScraper(self.pdf_processor)
@@ -43,18 +45,24 @@ class IngestionPipeline:
 		self.bm25_store = bm25_store
 		self.graph_store = graph_store
 		self.cache_store = cache_store
+		self.privacy_processor = privacy_processor
 
 	async def ingest(
 		self,
 		source: str | Path | bytes,
 		source_type: Literal["pdf", "url", "csv", "json", "docx"],
 		metadata_override: dict[str, Any] | None = None,
+		redact_pii: bool = True,
 	) -> IngestionResult:
 		"""Ingest one source end-to-end across retrieval backends."""
 		t0 = time.perf_counter()
 		warnings: list[str] = []
 
 		processed = await self._process_source(source=source, source_type=source_type)
+		if redact_pii:
+			redaction_count = self._apply_privacy(processed)
+			if redaction_count:
+				warnings.append(f"PII redaction applied to {redaction_count} content block(s).")
 		if metadata_override:
 			for key, value in metadata_override.items():
 				if hasattr(processed.metadata, key):
@@ -93,6 +101,7 @@ class IngestionPipeline:
 				source=item["source"],
 				source_type=item["source_type"],
 				metadata_override=item.get("metadata_override"),
+				redact_pii=item.get("redact_pii", True),
 			)
 			for item in sources
 		]
@@ -134,7 +143,15 @@ class IngestionPipeline:
 		source_type: Literal["pdf", "url", "csv", "json", "docx"],
 	) -> ProcessedDocument:
 		if source_type == "pdf":
-			return self.pdf_processor.process(source if isinstance(source, (str, Path)) else Path("inline.pdf"))
+			if isinstance(source, bytes):
+				with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+					tmp.write(source)
+					pdf_path = Path(tmp.name)
+				try:
+					return self.pdf_processor.process(pdf_path)
+				finally:
+					pdf_path.unlink(missing_ok=True)
+			return self.pdf_processor.process(source)
 		if source_type == "url":
 			if not isinstance(source, str):
 				raise TypeError("URL source must be a string")
@@ -220,6 +237,25 @@ class IngestionPipeline:
 		if suffix == ".docx":
 			return "docx"
 		return "json"
+
+	def _apply_privacy(self, processed: ProcessedDocument) -> int:
+		if self.privacy_processor is None or not hasattr(self.privacy_processor, "redact"):
+			return 0
+
+		updated_blocks = 0
+		redacted_raw = self.privacy_processor.redact(processed.raw_text)
+		if redacted_raw != processed.raw_text:
+			updated_blocks += 1
+			processed.raw_text = redacted_raw
+
+		for section in processed.sections:
+			redacted_section = self.privacy_processor.redact(section.text)
+			if redacted_section != section.text:
+				updated_blocks += 1
+				section.text = redacted_section
+
+		processed.metadata.extra["pii_redacted"] = updated_blocks > 0
+		return updated_blocks
 
 
 __all__ = ["IngestionPipeline"]

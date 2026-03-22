@@ -25,6 +25,7 @@ class QueryOptions(BaseModel):
 	use_hyde: bool = False
 	use_graph: bool = True
 	use_colbert: bool = False
+	enable_planning: bool = False
 	enable_adaptive: bool = True
 	enable_verification: bool = True
 	citation_style: str = "inline"
@@ -48,8 +49,16 @@ async def query(request: Request, body: QueryBody):
 	answer_generator = services["answer_generator"]
 	verifier = services["verifier"]
 	embedder = services["embedder"]
+	planner = getattr(request.app.state, "query_planning_agent", None)
 
 	analysis = analyzer.analyze(body.query)
+	reasoning_trace = [f"mode={analysis.suggested_mode}"]
+	if planner and (body.options.enable_planning or body.mode in {"multihop", "comparison"}):
+		try:
+			plan_result = await planner.run(body.query)
+			reasoning_trace.extend([f"plan:{s.action}" for s in plan_result.steps])
+		except Exception:
+			reasoning_trace.append("plan:failed")
 	query_emb = embedder.embed_query(body.query)
 	retrieval = await retrieval_engine.retrieve(
 		query=body.query,
@@ -65,7 +74,7 @@ async def query(request: Request, body: QueryBody):
 		query=body.query,
 		analysis=analysis,
 		chunks=retrieval.chunks,
-		reasoning_trace=[f"mode={analysis.suggested_mode}", "retrieve", "generate"],
+		reasoning_trace=reasoning_trace + ["retrieve", "generate"],
 	)
 	response.retrieval_quality = sum(retrieval.retrieval_scores.values()) / max(1, len(retrieval.retrieval_scores))
 

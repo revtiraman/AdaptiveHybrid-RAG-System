@@ -13,11 +13,13 @@ router = APIRouter(prefix="/api/ingest", tags=["ingest"])
 
 class URLIngestRequest(BaseModel):
 	url: str
+	redact_pii: bool = True
 
 
 class BatchIngestRequest(BaseModel):
 	urls: list[str]
 	async_mode: bool = False
+	redact_pii: bool = True
 
 
 @router.post("")
@@ -26,6 +28,7 @@ async def ingest_file(
 	file: UploadFile = File(...),
 	metadata: str | None = None,
 	async_mode: bool = False,
+	redact_pii: bool = True,
 ):
 	pipeline = request.app.state.pipeline
 	metadata_override: dict[str, Any] | None = None
@@ -41,21 +44,26 @@ async def ingest_file(
 	if async_mode:
 		return {"task_id": f"task-{abs(hash(file.filename or 'upload'))}", "status": "queued"}
 
-	result = await pipeline.ingest(source=payload, source_type=source_type, metadata_override=metadata_override)
+	result = await pipeline.ingest(
+		source=payload,
+		source_type=source_type,
+		metadata_override=metadata_override,
+		redact_pii=redact_pii,
+	)
 	return result.model_dump()
 
 
 @router.post("/url")
 async def ingest_url(request: Request, body: URLIngestRequest):
 	pipeline = request.app.state.pipeline
-	result = await pipeline.ingest(source=body.url, source_type="url")
+	result = await pipeline.ingest(source=body.url, source_type="url", redact_pii=body.redact_pii)
 	return result.model_dump()
 
 
 @router.post("/batch")
 async def ingest_batch(request: Request, body: BatchIngestRequest):
 	pipeline = request.app.state.pipeline
-	inputs = [{"source": u, "source_type": "url"} for u in body.urls]
+	inputs = [{"source": u, "source_type": "url", "redact_pii": body.redact_pii} for u in body.urls]
 	if body.async_mode:
 		return {"task_id": f"task-{abs(hash(tuple(body.urls)))}", "status": "queued"}
 	results = await pipeline.ingest_batch(inputs)

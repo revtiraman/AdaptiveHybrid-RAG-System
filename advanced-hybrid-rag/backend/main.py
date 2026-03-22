@@ -78,6 +78,7 @@ def create_app() -> FastAPI:
             bm25_store=bm25_store,
             graph_store=graph_store,
             cache_store=cache_store,
+            privacy_processor=privacy_processor,
         )
 
         retrieval_engine = HybridRetrievalEngine(
