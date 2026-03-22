@@ -90,6 +90,40 @@ export default function ChatInterface() {
 							</div>
 						)}
 						{m.role === "assistant" && (
+							<details style={{ marginTop: 6, fontSize: 12, color: "#374151" }}>
+								<summary style={{ cursor: "pointer" }}>Details</summary>
+								<div style={{ marginTop: 6, border: "1px solid #e5e7eb", borderRadius: 8, padding: 8, background: "#f9fafb" }}>
+									{m.queryId && (
+										<div>
+											<strong>Query ID:</strong> {m.queryId}
+										</div>
+									)}
+									{m.reasoningTrace && m.reasoningTrace.length > 0 && (
+										<div style={{ marginTop: 4 }}>
+											<strong>Reasoning Trace</strong>
+											<ul style={{ margin: "4px 0 0 18px", padding: 0 }}>
+												{m.reasoningTrace.slice(0, 12).map((step, idx) => (
+													<li key={`${m.id}-trace-${idx}`}>{step}</li>
+												))}
+											</ul>
+										</div>
+									)}
+									{m.citations && m.citations.length > 0 && (
+										<div style={{ marginTop: 4 }}>
+											<strong>Citations</strong>
+											<ul style={{ margin: "4px 0 0 18px", padding: 0 }}>
+												{m.citations.slice(0, 8).map((c, idx) => (
+													<li key={`${m.id}-cite-${idx}`}>
+														{c.doc_id} / {c.chunk_id}
+													</li>
+												))}
+											</ul>
+										</div>
+									)}
+								</div>
+							</details>
+						)}
+						{m.role === "assistant" && (
 							<span style={{ marginLeft: 8 }}>
 								<button onClick={() => void navigator.clipboard.writeText(m.content)}>Copy</button>
 								<button onClick={() => void rateMessage(m.id, "up")}>+</button>
