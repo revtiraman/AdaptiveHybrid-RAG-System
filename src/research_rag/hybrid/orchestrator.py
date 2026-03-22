@@ -1,0 +1,191 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from time import perf_counter
+
+from research_rag.hybrid.config import HybridRAGSettings
+from research_rag.hybrid.domain import QueryResult
+from research_rag.hybrid.engines.adaptive_engine import AdaptiveCorrectiveEngine
+from research_rag.hybrid.engines.chunker import SectionAwareChunker
+from research_rag.hybrid.engines.embedding import BGEEmbedder, CrossEncoderReranker
+from research_rag.hybrid.engines.ingestion_engine import IngestionEngine
+from research_rag.hybrid.engines.llm import LLMClient
+from research_rag.hybrid.engines.pdf_parser import PDFParser
+from research_rag.hybrid.engines.reasoning_engine import ReasoningEngine
+from research_rag.hybrid.engines.retrieval_engine import HybridRetrievalEngine
+from research_rag.hybrid.storage.chroma_store import VectorStore
+from research_rag.hybrid.storage.sqlite_store import MetadataStore
+
+
+@dataclass(slots=True)
+class HybridSystemStats:
+    papers: int
+    chunks: int
+    embedding_provider: str
+    reranker_provider: str
+    llm_provider: str
+
+
+class HybridRAGSystem:
+    def __init__(self, settings: HybridRAGSettings) -> None:
+        self.settings = settings
+        settings.ensure_directories()
+
+        self.metadata_store = MetadataStore(settings.sqlite_path)
+        self.metadata_store.initialize()
+
+        self.vector_store = VectorStore(settings)
+        self.vector_store.initialize()
+
+        self.embedder = BGEEmbedder(settings.embedding_model)
+        self.reranker = CrossEncoderReranker(settings.reranker_model)
+
+        llm_client = None
+        if settings.llm_provider == "openai" and settings.openai_api_key:
+            llm_client = LLMClient(
+                provider="openai",
+                model=settings.llm_model,
+                api_key=settings.openai_api_key,
+                base_url=settings.openai_base_url,
+                timeout_seconds=settings.request_timeout_seconds,
+            )
+        elif settings.llm_provider == "gemini" and settings.gemini_api_key:
+            llm_client = LLMClient(
+                provider="gemini",
+                model=settings.gemini_model,
+                api_key=settings.gemini_api_key,
+                base_url=settings.gemini_base_url,
+                timeout_seconds=settings.request_timeout_seconds,
+            )
+
+        self.ingestion = IngestionEngine(
+            settings=settings,
+            parser=PDFParser(enable_pdfplumber=settings.enable_pdfplumber),
+            chunker=SectionAwareChunker(chunk_chars=settings.chunk_chars, overlap=settings.chunk_overlap),
+            embedder=self.embedder,
+            vector_store=self.vector_store,
+            metadata_store=self.metadata_store,
+        )
+        self.retrieval = HybridRetrievalEngine(
+            metadata_store=self.metadata_store,
+            vector_store=self.vector_store,
+            embedder=self.embedder,
+            reranker=self.reranker,
+            rrf_k=settings.rrf_k,
+        )
+        self.reasoning = ReasoningEngine(llm_client=llm_client)
+        self._active_llm_provider = llm_client.provider if llm_client else "none"
+        self.adaptive = AdaptiveCorrectiveEngine(
+            base_k=settings.base_k,
+            max_k=settings.max_k,
+            max_retries=settings.max_retries,
+        )
+
+    def ingest_pdf(self, pdf_path: str, title: str | None = None, paper_id: str | None = None) -> dict[str, object]:
+        return self.ingestion.ingest_pdf(pdf_path=pdf_path, title=title, paper_id=paper_id).to_dict()
+
+    def query(self, question: str, paper_ids: list[str] | None = None, filters: dict[str, object] | None = None) -> QueryResult:
+        started = perf_counter()
+        plan = self.reasoning.classify_query(question)
+
+        retries = 0
+        final_candidates = []
+        final_answer = ""
+        final_claims = []
+        verification = None
+        quality = 0.0
+
+        while True:
+            k = self.adaptive.choose_k(quality=quality, retry_count=retries, query_type=plan.query_type)
+            candidates = self.retrieval.retrieve(
+                query=question,
+                top_k=k,
+                paper_ids=paper_ids,
+                filters=filters,
+                per_section_cap=3,
+            )
+            quality = self.adaptive.retrieval_quality(candidates)
+            answer, claims = self.reasoning.generate_answer(question=question, plan=plan, contexts=candidates)
+            verification = self.adaptive.verify_answer(answer, [item.chunk.text for item in candidates])
+
+            final_candidates = candidates
+            final_answer = answer
+            final_claims = claims
+
+            llm_error = self.reasoning.last_llm_error or ""
+            if llm_error and any(token in llm_error.lower() for token in ["quota", "resource_exhausted", "429"]):
+                # Do not waste retries when provider quota is exhausted.
+                break
+
+            if not self.adaptive.should_retry(verification=verification, quality=quality, retries=retries):
+                break
+            retries += 1
+
+        citations = []
+        seen = set()
+        for claim in final_claims:
+            for citation in claim.citations:
+                key = (citation.get("paper_id"), citation.get("chunk_id"), citation.get("page_number"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                citations.append(citation)
+
+        latency_ms = int((perf_counter() - started) * 1000)
+        diagnostic = {
+            "retrieved_chunks": [
+                {
+                    "chunk_id": c.chunk.chunk_id,
+                    "paper_id": c.chunk.paper_id,
+                    "page_number": c.chunk.page_number,
+                    "section": c.chunk.section,
+                    "rrf_score": round(c.rrf_score, 4),
+                    "rerank_score": round(c.rerank_score, 4),
+                }
+                for c in final_candidates[:20]
+            ],
+            "verification": {
+                "supported": verification.supported if verification else False,
+                "confidence": verification.confidence if verification else 0.0,
+                "unsupported_claims": verification.unsupported_claims if verification else [],
+            },
+            "llm_error": self.reasoning.last_llm_error,
+            "k_final": len(final_candidates),
+        }
+
+        return QueryResult(
+            question=question,
+            query_type=plan.query_type,
+            hops=plan.hops,
+            answer=final_answer,
+            claims=final_claims,
+            citations=citations,
+            retrieval_quality=quality,
+            retries=retries,
+            latency_ms=latency_ms,
+            diagnostic=diagnostic,
+        )
+
+    def list_papers(self) -> list[dict[str, object]]:
+        return [
+            {
+                "paper_id": p.paper_id,
+                "title": p.title,
+                "source_path": p.source_path,
+                "page_count": p.page_count,
+                "chunk_count": p.chunk_count,
+                "updated_at": p.updated_at,
+            }
+            for p in self.metadata_store.list_papers()
+        ]
+
+    def stats(self) -> HybridSystemStats:
+        papers = len(self.metadata_store.list_papers())
+        chunks = self.metadata_store.count_chunks()
+        return HybridSystemStats(
+            papers=papers,
+            chunks=chunks,
+            embedding_provider=self.embedder.provider_name,
+            reranker_provider=self.reranker.provider_name,
+            llm_provider=self._active_llm_provider,
+        )

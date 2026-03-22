@@ -1,0 +1,2 @@
+[console_scripts]
+research-rag = research_rag.cli:main

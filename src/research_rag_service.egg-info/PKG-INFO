@@ -1,0 +1,262 @@
+Metadata-Version: 2.4
+Name: research-rag-service
+Version: 1.0.0
+Summary: Adaptive Hybrid RAG for scientific paper QA with vector+BM25 retrieval, reranking, and self-verification.
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi<1.0,>=0.116
+Requires-Dist: chromadb<1.0,>=0.5
+Requires-Dist: openai<2.0,>=1.55
+Requires-Dist: pdfplumber<1.0,>=0.11
+Requires-Dist: pypdf<6.0,>=5.4
+Requires-Dist: python-multipart<1.0,>=0.0.12
+Requires-Dist: rank-bm25<1.0,>=0.2.2
+Requires-Dist: sentence-transformers<4.0,>=3.2
+Requires-Dist: streamlit<2.0,>=1.44
+Requires-Dist: uvicorn[standard]<1.0,>=0.35
+Provides-Extra: dev
+Requires-Dist: httpx<1.0,>=0.28; extra == "dev"
+Requires-Dist: pytest<9.0,>=8.3; extra == "dev"
+Requires-Dist: ruff<1.0,>=0.11; extra == "dev"
+
+# Research Paper RAG Service
+
+This repository is now a production-oriented baseline for a research-paper RAG system. It is built to ingest PDFs, chunk and index them, retrieve relevant passages with a local SQLite-backed vector store, and answer questions through either a deterministic local generator or OpenAI-backed generation.
+
+The project is designed to work in two modes:
+
+- `hash` + `extractive`: fully local, deterministic, good for development and tests.
+- `openai` + `openai`: production-style retrieval and answer generation using OpenAI embeddings and the Responses API.
+
+## What is included
+
+- FastAPI service with health checks and typed JSON endpoints.
+- Optional API-key auth with tenant isolation for SaaS-style deployments.
+- CLI for ingestion, querying, document listing, and serving.
+- SQLite vector store with document metadata and chunk persistence.
+- PDF ingestion pipeline with managed document storage under `data/documents/`.
+- Sentence-aware chunking with overlap to preserve context continuity.
+- Pluggable embeddings and answer generation providers.
+- Dockerfile, Makefile, env template, and unit tests.
+
+## Architecture
+
+The system is intentionally layered so you can replace individual components without rewriting the rest of the app:
+
+- `research_rag.adapters.pdf_loader.PdfLoader`
+  Reads PDF pages using `pypdf`.
+- `research_rag.chunking.chunk_pages`
+  Converts page text into overlapping chunks with page-level citation fidelity.
+- `research_rag.adapters.embeddings.*`
+  Turns chunks and questions into vectors. The hashing provider is deterministic and dependency-light; the OpenAI provider is production-facing.
+- `research_rag.adapters.store.SqliteVectorStore`
+  Persists documents and chunk embeddings in SQLite and performs cosine-similarity search.
+- `research_rag.adapters.generator.*`
+  Produces answers. The extractive generator is local; the OpenAI generator calls the Responses API.
+- `research_rag.services.ingestion.DocumentIngestionService`
+  Orchestrates file validation, copying, parsing, chunking, embedding, and indexing.
+- `research_rag.services.query.RagQueryService`
+  Embeds the user query, retrieves top chunks, and produces a cited answer.
+
+## Project layout
+
+```text
+.
+├── src/research_rag
+│   ├── adapters
+│   ├── api
+│   ├── services
+│   ├── bootstrap.py
+│   ├── chunking.py
+│   ├── cli.py
+│   ├── domain.py
+│   ├── logging.py
+│   └── settings.py
+├── tests
+├── Dockerfile
+├── Makefile
+└── pyproject.toml
+```
+
+## Quickstart
+
+### 1. Install dependencies
+
+```bash
+python3 -m pip install -e .
+```
+
+For development tools:
+
+```bash
+python3 -m pip install -e .[dev]
+```
+
+### 2. Configure environment
+
+Copy `.env.example` into `.env` or export the variables manually.
+
+Local deterministic mode:
+
+```bash
+export EMBEDDING_PROVIDER=hash
+export GENERATION_PROVIDER=extractive
+```
+
+OpenAI-backed mode:
+
+```bash
+export EMBEDDING_PROVIDER=openai
+export GENERATION_PROVIDER=openai
+export OPENAI_API_KEY=your_key_here
+export OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+export OPENAI_RESPONSES_MODEL=gpt-5-mini
+```
+
+SaaS mode (API keys + tenant isolation):
+
+```bash
+export API_KEYS="team-a:key-a,team-b:key-b"
+```
+
+In SaaS mode, all `/v1/*` requests require `x-api-key` (or `Authorization: Bearer ...`).
+Documents are automatically tagged per tenant and queries/listing are scoped to that tenant.
+
+### 3. Ingest your PDF
+
+The PDF you pointed to can be ingested directly:
+
+```bash
+PYTHONPATH=src python3 -m research_rag.cli ingest \
+  --pdf "/Users/revtiramantripathi/Downloads/ilovepdf_merged (2) (6).pdf"
+```
+
+This will:
+
+- copy the PDF into `data/documents/`
+- extract page text
+- split pages into overlapping chunks
+- embed the chunks
+- persist the document and chunk index into `data/rag.sqlite3`
+
+### 4. Query the indexed paper
+
+```bash
+PYTHONPATH=src python3 -m research_rag.cli query \
+  --question "Summarize the main problem, method, and conclusions."
+```
+
+### 5. Run the API
+
+```bash
+uvicorn research_rag.api.app:create_app --factory --host 0.0.0.0 --port 8000 --reload
+```
+
+OpenAPI docs will be available at `http://127.0.0.1:8000/docs`.
+
+## API endpoints
+
+### `GET /health/live`
+
+Basic liveness probe.
+
+### `GET /health/ready`
+
+Readiness probe showing storage path, provider selection, and indexed document count.
+
+### `GET /v1/documents`
+
+Lists indexed documents.
+
+When `API_KEYS` is configured, this endpoint returns only the authenticated tenant's documents.
+
+### `POST /v1/documents/ingest`
+
+Request body:
+
+```json
+{
+  "pdf_path": "/absolute/path/to/paper.pdf",
+  "document_id": "optional-stable-id",
+  "metadata": {
+    "source": "manual-upload"
+  }
+}
+```
+
+SaaS mode behavior:
+
+- requires `x-api-key` or bearer auth
+- stores `tenant_id` metadata automatically
+- namespaces `document_id` per tenant to avoid collisions
+
+### `POST /v1/query`
+
+Request body:
+
+```json
+{
+  "question": "What evaluation metrics were reported?",
+  "top_k": 5,
+  "document_id": "optional-doc-filter"
+}
+```
+
+In SaaS mode, retrieval is automatically tenant-scoped even when `document_id` is omitted.
+
+Response includes:
+
+- answer text
+- citations with page numbers and chunk identifiers
+- retrieved chunk previews and similarity scores
+- generator/provider name
+
+## Make targets
+
+- `make install`
+- `make dev`
+- `make test`
+- `make check`
+- `make run`
+- `make ingest`
+- `make query`
+- `make list-docs`
+- `make docker-build`
+
+## Running with Docker
+
+Build:
+
+```bash
+docker build -t research-rag-service .
+```
+
+Run:
+
+```bash
+docker run --rm -p 8000:8000 \
+  -e EMBEDDING_PROVIDER=hash \
+  -e GENERATION_PROVIDER=extractive \
+  -v "$(pwd)/data:/app/data" \
+  research-rag-service
+```
+
+## Production notes
+
+This repository is now structured for production work, but a few scale-up steps are still worth considering depending on traffic and data volume:
+
+- Replace the SQLite store with `pgvector`, Qdrant, or another dedicated vector database when indexing many papers.
+- Add authentication if the ingestion API should not be publicly accessible.
+- Put the service behind a reverse proxy and configure TLS at the edge.
+- Add background jobs for ingestion if you expect large PDFs or many concurrent uploads.
+- Add metrics and tracing if you need deeper operational visibility.
+- Add evaluation datasets and answer-quality regression tests before model changes.
+
+## Local verification
+
+The included unit tests focus on the chunker, vector store, and query pipeline. They are designed to run without external API calls.
+
+```bash
+python3 -m unittest discover -s tests -v
+python3 -m compileall src tests
+```

@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "research-rag-service"
+version = "1.0.0"
+description = "Adaptive Hybrid RAG for scientific paper QA with vector+BM25 retrieval, reranking, and self-verification."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.116,<1.0",
+  "chromadb>=0.5,<1.0",
+  "openai>=1.55,<2.0",
+  "pdfplumber>=0.11,<1.0",
+  "pypdf>=5.4,<6.0",
+  "python-multipart>=0.0.12,<1.0",
+  "rank-bm25>=0.2.2,<1.0",
+  "sentence-transformers>=3.2,<4.0",
+  "streamlit>=1.44,<2.0",
+  "uvicorn[standard]>=0.35,<1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.28,<1.0",
+  "pytest>=8.3,<9.0",
+  "ruff>=0.11,<1.0",
+]
+
+[project.scripts]
+research-rag = "research_rag.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

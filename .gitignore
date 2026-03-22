@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+.env
+data/*.sqlite3
+data/documents/*.pdf
+data/chroma/
+web/node_modules/
+web/dist/
