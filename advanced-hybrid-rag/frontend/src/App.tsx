@@ -15,14 +15,14 @@ export default function App() {
 					<h1 style={{ margin: 0 }}>Advanced Hybrid RAG</h1>
 					<p style={{ marginTop: 6 }}>Adaptive research assistant with hybrid retrieval, verification, and citations.</p>
 				</header>
-				<div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 16 }}>
-					<div style={{ display: "grid", gap: 16 }}>
+				<div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16 }}>
+					<div style={{ display: "grid", gap: 16, alignContent: "start" }}>
 						<DocumentUpload />
 						<SettingsPanel />
 						<AdvancedActionsPanel />
 						<EvalDashboard />
 					</div>
-					<div style={{ display: "grid", gap: 16 }}>
+					<div style={{ display: "grid", gap: 16, alignContent: "start" }}>
 						<ChatInterface />
 						<ReasoningTrace />
 						<CitationViewer />

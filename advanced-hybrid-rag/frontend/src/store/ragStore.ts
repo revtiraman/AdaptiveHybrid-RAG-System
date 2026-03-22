@@ -29,6 +29,7 @@ interface RAGState {
 	finalizeStreamQuery: (response: any) => void;
 	failStreamQuery: (message: string) => void;
 	uploadDocument: (file: File, redactPII?: boolean) => Promise<void>;
+	ingestUrl: (url: string, redactPII?: boolean) => Promise<void>;
 	deleteDocument: (docId: string) => Promise<void>;
 	updateSettings: (partial: Partial<RAGSettings>) => void;
 	rateMessage: (messageId: string, rating: "up" | "down") => Promise<void>;
@@ -158,6 +159,21 @@ export const useRAGStore = create<RAGState>((set, get) => ({
 		const res = await fetch(ingestPath, { method: "POST", body: formData });
 		const data = await res.json();
 		set({ documents: [{ doc_id: data.doc_id, title: file.name }, ...get().documents] });
+	},
+
+	ingestUrl: async (url: string, redactPII = true) => {
+		const res = await fetch("/api/ingest/url", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ url, redact_pii: redactPII }),
+		});
+		const data = await res.json();
+		set({
+			documents: [
+				{ doc_id: data.doc_id, title: data.doc_id, source: url },
+				...get().documents,
+			],
+		});
 	},
 
 	deleteDocument: async (docId: string) => {
