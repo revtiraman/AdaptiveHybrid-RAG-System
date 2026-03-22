@@ -6,6 +6,7 @@ import { useRAGStore } from "../store/ragStore";
 export default function ChatInterface() {
 	const { messages, settings, isStreaming, rateMessage, startStreamQuery, appendStreamChunk, finalizeStreamQuery, failStreamQuery } = useRAGStore();
 	const [query, setQuery] = useState("");
+	const [filterMode, setFilterMode] = useState<"all" | "issues" | "retried">("all");
 	const { events, connect, close, connected } = useStream();
 
 	const formatScore = (value?: number) => (typeof value === "number" ? value.toFixed(2) : null);
@@ -52,12 +53,57 @@ export default function ChatInterface() {
 		setQuery("");
 	};
 
+	const assistantMessages = messages.filter((m) => m.role === "assistant");
+	const issueCount = assistantMessages.filter((m) => (m.warnings?.length ?? 0) > 0).length;
+	const retryCount = assistantMessages.filter((m) => (m.correctiveIterations ?? 0) > 0).length;
+	const visibleMessages = messages.filter((m) => {
+		if (m.role !== "assistant") return filterMode === "all";
+		if (filterMode === "issues") return (m.warnings?.length ?? 0) > 0;
+		if (filterMode === "retried") return (m.correctiveIterations ?? 0) > 0;
+		return true;
+	});
+
+	const severityColor = (m: (typeof messages)[number]) => {
+		if (m.role !== "assistant") return "transparent";
+		if ((m.warnings?.length ?? 0) > 0) return "#f59e0b";
+		if (typeof m.groundingScore === "number" && m.groundingScore < 0.5) return "#dc2626";
+		return "#e5e7eb";
+	};
+
+	const copyDiagnostics = async (m: (typeof messages)[number]) => {
+		const payload = {
+			id: m.id,
+			queryId: m.queryId,
+			correctiveIterations: m.correctiveIterations,
+			retrievalQuality: m.retrievalQuality,
+			groundingScore: m.groundingScore,
+			warnings: m.warnings ?? [],
+			reasoningTrace: m.reasoningTrace ?? [],
+			citations: m.citations ?? [],
+		};
+		await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+	};
+
 	return (
 		<section style={{ background: "white", borderRadius: 12, padding: 14 }}>
 			<h3>Chat</h3>
+			<div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8, alignItems: "center" }}>
+				<button onClick={() => setFilterMode("all")} style={{ background: filterMode === "all" ? "#dbeafe" : "#f3f4f6" }}>
+					All
+				</button>
+				<button onClick={() => setFilterMode("issues")} style={{ background: filterMode === "issues" ? "#fde68a" : "#f3f4f6" }}>
+					With issues
+				</button>
+				<button onClick={() => setFilterMode("retried")} style={{ background: filterMode === "retried" ? "#dcfce7" : "#f3f4f6" }}>
+					Retried
+				</button>
+				<span style={{ fontSize: 12, color: "#374151" }}>assistant: {assistantMessages.length}</span>
+				<span style={{ fontSize: 12, color: "#92400e" }}>issues: {issueCount}</span>
+				<span style={{ fontSize: 12, color: "#166534" }}>retried: {retryCount}</span>
+			</div>
 			<div style={{ maxHeight: 280, overflow: "auto", marginBottom: 8 }}>
-				{messages.map((m) => (
-					<div key={m.id} style={{ marginBottom: 10 }}>
+				{visibleMessages.map((m) => (
+					<div key={m.id} style={{ marginBottom: 10, padding: 8, border: `1px solid ${severityColor(m)}`, borderRadius: 8 }}>
 						<strong>{m.role === "user" ? "You" : "Assistant"}:</strong> {m.content}
 						{m.role === "assistant" && (
 							<div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
@@ -120,6 +166,9 @@ export default function ChatInterface() {
 											</ul>
 										</div>
 									)}
+									<div style={{ marginTop: 8 }}>
+										<button onClick={() => void copyDiagnostics(m)}>Copy diagnostics JSON</button>
+									</div>
 								</div>
 							</details>
 						)}
