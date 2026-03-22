@@ -22,6 +22,9 @@ export interface RAGSettings {
 	use_graph: boolean;
 	use_colbert: boolean;
 	enable_planning?: boolean;
+	enable_adaptive?: boolean;
+	enable_verification?: boolean;
+	citation_style?: "inline" | "footnote";
 	max_sources: number;
 	model?: string;
 }

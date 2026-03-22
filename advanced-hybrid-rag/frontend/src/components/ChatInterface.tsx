@@ -33,6 +33,10 @@ export default function ChatInterface() {
 			use_graph: String(Boolean(settings.use_graph)),
 			use_colbert: String(Boolean(settings.use_colbert)),
 			enable_planning: String(Boolean(settings.enable_planning)),
+			enable_verification: String(Boolean(settings.enable_verification)),
+			enable_adaptive: String(Boolean(settings.enable_adaptive)),
+			citation_style: String(settings.citation_style || "inline"),
+			model: String(settings.model || ""),
 		});
 		return `/api/query/stream?${params.toString()}`;
 	};

@@ -47,6 +47,9 @@ const defaultSettings: RAGSettings = {
 	use_graph: true,
 	use_colbert: false,
 	enable_planning: false,
+	enable_adaptive: true,
+	enable_verification: true,
+	citation_style: "inline",
 	max_sources: 5,
 };
 

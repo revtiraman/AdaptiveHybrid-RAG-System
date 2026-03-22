@@ -9,7 +9,9 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from backend.ingestion.models import Chunk, ChunkMetadata
+from backend.retrieval.colbert_retriever import ColBERTRetriever
 from backend.retrieval.hybrid_engine import HybridRetrievalEngine, RetrievalFilters
+from backend.retrieval.hyde_retriever import HyDERetriever
 from backend.storage.vector_store import SearchResult
 
 
@@ -133,3 +135,37 @@ def test_graph_failure_does_not_break_retrieval():
 
 	assert graph.calls == 1
 	assert result.latency_ms >= 0
+
+
+class _FakeVectorStore:
+	def __init__(self) -> None:
+		self.calls = 0
+
+	async def search(self, query_embedding, k: int, filter=None):
+		_ = query_embedding
+		_ = filter
+		self.calls += 1
+		if self.calls == 1:
+			return [SearchResult(chunk=_result("doc-a").chunk, score=0.3, source="vector")]
+		return [SearchResult(chunk=_result("doc-a").chunk, score=0.9, source="vector")]
+
+
+def test_hyde_retriever_merges_direct_and_hypothetical_scores():
+	store = _FakeVectorStore()
+	ret = HyDERetriever(vector_store=store, embedder=_DummyEmbedder(), llm_generate=None)
+	items = asyncio.run(ret.retrieve("test query", k=3))
+	assert len(items) == 1
+	assert items[0].score > 0.5
+
+
+def test_colbert_retriever_prefers_better_token_overlap():
+	ret = ColBERTRetriever()
+	chunk_good = _result("good").chunk
+	chunk_good.text = "retrieval augmented generation benchmark"
+	chunk_bad = _result("bad").chunk
+	chunk_bad.text = "yoga breathing movement pose"
+	ret.index_chunks([chunk_good, chunk_bad])
+
+	results = ret.search("retrieval generation", k=2)
+	assert len(results) == 2
+	assert results[0].chunk.metadata.chunk_id == chunk_good.metadata.chunk_id

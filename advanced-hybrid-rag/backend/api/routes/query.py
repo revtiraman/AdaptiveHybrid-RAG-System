@@ -102,6 +102,10 @@ async def query_stream_get(
 	use_graph: bool = True,
 	use_colbert: bool = False,
 	enable_planning: bool = False,
+	enable_verification: bool = True,
+	enable_adaptive: bool = True,
+	citation_style: str = "inline",
+	model: str | None = None,
 ):
 	body = QueryBody(
 		query=query,
@@ -113,6 +117,10 @@ async def query_stream_get(
 			use_graph=use_graph,
 			use_colbert=use_colbert,
 			enable_planning=enable_planning,
+			enable_verification=enable_verification,
+			enable_adaptive=enable_adaptive,
+			citation_style=citation_style,
+			model=model,
 		),
 	)
 	return StreamingResponse(_event_stream(request, body), media_type="text/event-stream")
