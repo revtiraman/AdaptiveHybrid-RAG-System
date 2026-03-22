@@ -151,7 +151,7 @@ class ReasoningEngine:
         return answer, claims
 
     def _overview_fallback(self, question: str, contexts: list[RetrievalCandidate]) -> tuple[str, list[AnswerClaim]]:
-        selected = contexts[:8]
+        selected = self._prioritize_overview_contexts(contexts)[:8]
         text_blob = " ".join(item.chunk.text for item in selected)
         cleaned_blob = self._clean_claim_text(text_blob)
 
@@ -181,6 +181,12 @@ class ReasoningEngine:
             if tech_stack:
                 answer_parts.append("Important technical terms include " + ", ".join(tech_stack[:5]) + ".")
 
+            if not evidence_sentences:
+                answer_parts = [
+                    "I found relevant sections, but the extracted PDF text is too noisy for a reliable high-level summary in fallback mode.",
+                    "Enable an LLM provider (for example Gemini/OpenAI) or re-index with cleaner OCR to get a coherent paper overview.",
+                ]
+
         answer = self._clean_claim_text(" ".join(answer_parts))
 
         claims: list[AnswerClaim] = []
@@ -204,6 +210,55 @@ class ReasoningEngine:
         return answer, claims
 
     @staticmethod
+    def _prioritize_overview_contexts(contexts: list[RetrievalCandidate]) -> list[RetrievalCandidate]:
+        priority = {
+            "abstract": 0,
+            "introduction": 1,
+            "conclusion": 2,
+            "results": 3,
+            "method": 4,
+            "experiments": 5,
+            "related_work": 6,
+            "body": 7,
+        }
+        filtered = [item for item in contexts if not ReasoningEngine._is_noise_chunk_text(item.chunk.text)]
+        source = filtered if filtered else contexts
+        return sorted(source, key=lambda item: (priority.get(item.chunk.section, 99), -item.rerank_score, -item.rrf_score))
+
+    @staticmethod
+    def _is_noise_chunk_text(text: str) -> bool:
+        lower = (text or "").lower()
+        if not lower.strip():
+            return True
+
+        # Common front-matter and bibliography patterns that degrade fallback summaries.
+        noise_markers = [
+            "@",
+            "conference",
+            "proceedings",
+            "copyright",
+            "equal contribution",
+            "listing order",
+            "google brain",
+            "nips",
+            "neurips",
+        ]
+        marker_hits = sum(1 for marker in noise_markers if marker in lower)
+        if marker_hits >= 2:
+            return True
+
+        words = re.findall(r"[a-zA-Z]+", text)
+        if len(words) < 8:
+            return True
+
+        # Down-rank chunks that are mostly names/labels and not explanatory prose.
+        long_words = [w for w in words if len(w) >= 4]
+        if long_words and sum(1 for w in long_words if w[0].isupper()) / len(long_words) > 0.6:
+            return True
+
+        return False
+
+    @staticmethod
     def _best_sentence(text: str) -> str:
         sentences = [segment.strip() for segment in re.split(r"(?<=[.!?])\s+", text) if segment.strip()]
         if not sentences:
@@ -212,6 +267,12 @@ class ReasoningEngine:
             cleaned = re.sub(r"^[^A-Za-z0-9]+", "", cleaned)
             return cleaned[:240]
 
+        for sentence in sentences:
+            if not re.match(r"^[A-Z0-9]", sentence):
+                continue
+            alpha_count = len(re.findall(r"[A-Za-z]", sentence))
+            if alpha_count >= 20:
+                return ReasoningEngine._clean_claim_text(sentence[:240])
         for sentence in sentences:
             alpha_count = len(re.findall(r"[A-Za-z]", sentence))
             if alpha_count >= 20:
@@ -286,11 +347,23 @@ class ReasoningEngine:
         scored: list[tuple[int, str]] = []
         keywords = {"propose", "develop", "build", "evaluate", "result", "improve", "system"}
         for sentence in sentences:
+            cleaned = ReasoningEngine._clean_claim_text(sentence)
+            if not cleaned or len(cleaned) < 40:
+                continue
+            if not re.match(r"^[A-Z]", cleaned):
+                continue
+            if cleaned.count(" ") < 6:
+                continue
+            if len(re.findall(r"[A-Za-z]", cleaned)) < 25:
+                continue
+
             lower = sentence.lower()
             score = sum(1 for key in keywords if key in lower)
-            if len(sentence) > 25:
+            if len(cleaned) > 25:
                 score += 1
-            scored.append((score, sentence))
+            if any(marker in lower for marker in ["copyright", "conference", "author", "email"]):
+                score -= 2
+            scored.append((score, cleaned))
         scored.sort(key=lambda item: item[0], reverse=True)
         return [ReasoningEngine._clean_claim_text(item[1]) for item in scored[:3] if item[0] > 0]
 

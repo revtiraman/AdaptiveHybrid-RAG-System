@@ -10,7 +10,8 @@ class AdaptiveCorrectiveEngine:
         self.base_k = base_k
         self.max_k = max_k
         self.max_retries = max_retries
-        self.min_quality_threshold = 0.18
+        # Keep retry policy aligned with UI quality bands so "Low" quality is corrected.
+        self.min_quality_threshold = 0.45
 
     def retrieval_quality(self, candidates) -> float:
         if not candidates:

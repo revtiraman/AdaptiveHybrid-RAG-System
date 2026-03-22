@@ -16,6 +16,8 @@ _SECTION_PATTERNS = [
     ("conclusion", re.compile(r"^\s*(6\.?\s*)?conclusion[s]?\s*$", re.IGNORECASE)),
 ]
 
+_NUMBERED_HEADING = re.compile(r"^\s*(\d+(?:\.\d+)*)\s+([A-Za-z][A-Za-z0-9\- ]{2,80})\s*$")
+
 
 class SectionAwareChunker:
     def __init__(self, chunk_chars: int = 200, overlap: int = 40) -> None:
@@ -37,7 +39,7 @@ class SectionAwareChunker:
 
             sentences_buffer: list[str] = []
             for line in lines:
-                normalized_line = normalize_ws(line)
+                normalized_line = self._clean_line_text(line)
                 if not normalized_line:
                     continue
 
@@ -56,9 +58,20 @@ class SectionAwareChunker:
 
     @staticmethod
     def _split_sentences(text: str) -> list[str]:
-        parts = re.split(r"(?<=[.!?])\s+", text)
+        parts = re.split(r"(?<=[.!?])\s*", text)
         sentences = [part.strip() for part in parts if part.strip()]
         return sentences or [text]
+
+    @staticmethod
+    def _clean_line_text(text: str) -> str:
+        cleaned = normalize_ws(text)
+        if not cleaned:
+            return ""
+        # Repair common PDF extraction artifacts such as missing spaces after punctuation.
+        cleaned = re.sub(r"([.!?;:,])([A-Z])", r"\1 \2", cleaned)
+        # Split lower->Upper transitions that frequently appear in extracted PDF text.
+        cleaned = re.sub(r"([a-z])([A-Z])", r"\1 \2", cleaned)
+        return normalize_ws(cleaned)
 
     def _build_sentence_chunks(self, sentences: list[str]) -> list[str]:
         if not sentences:
@@ -137,6 +150,22 @@ class SectionAwareChunker:
         for section, pattern in _SECTION_PATTERNS:
             if pattern.match(line):
                 return section
+
+        numbered = _NUMBERED_HEADING.match(line)
+        if numbered:
+            title = numbered.group(2).strip().lower()
+            if any(token in title for token in ["intro", "motivation"]):
+                return "introduction"
+            if any(token in title for token in ["related", "background"]):
+                return "related_work"
+            if any(token in title for token in ["method", "model", "architecture", "approach"]):
+                return "method"
+            if any(token in title for token in ["experiment", "evaluation", "training"]):
+                return "experiments"
+            if any(token in title for token in ["result", "analysis", "discussion"]):
+                return "results"
+            if any(token in title for token in ["conclusion", "future work"]):
+                return "conclusion"
         return None
 
     @staticmethod
