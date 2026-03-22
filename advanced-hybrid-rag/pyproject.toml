@@ -1,0 +1,10 @@
+[project]
+name = "advanced-hybrid-rag"
+version = "0.1.0"
+description = "Advanced Hybrid RAG scaffold"
+requires-python = ">=3.11"
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
