@@ -4,10 +4,10 @@ import asyncio
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from ingestion.models import Chunk, ChunkMetadata
-from reasoning.self_verifier import SelfVerifier
+from backend.ingestion.models import Chunk, ChunkMetadata
+from backend.reasoning.self_verifier import SelfVerifier
 
 
 def _chunk(text: str, chunk_id: str = "c1", page: int = 1) -> Chunk:
@@ -44,6 +44,21 @@ def test_hallucination_detection_flags_entities():
 	verifier = SelfVerifier()
 	res = asyncio.run(verifier.verify("q", "MadeupEntity beats all models.", [_chunk("BERT baseline only.")]))
 	assert not res.passed
+	assert any(i.issue_type == "hallucination" for i in res.issues)
+
+
+def test_contradiction_detection_flags_conflicting_terms():
+	verifier = SelfVerifier()
+	answer = "The model is reliable for deployment. The model is not reliable in production."
+	res = asyncio.run(verifier.verify("is model reliable", answer, [_chunk("The model is reliable in some cases.")]))
+	assert any(i.issue_type == "consistency" for i in res.issues)
+
+
+def test_entities_present_in_query_are_not_flagged():
+	verifier = SelfVerifier()
+	answer = "BERT improves retrieval quality."
+	res = asyncio.run(verifier.verify("How does BERT help?", answer, [_chunk("retrieval quality improves")]))
+	assert not any(i.issue_type == "hallucination" for i in res.issues)
 
 
 def test_passes_when_fully_grounded():
