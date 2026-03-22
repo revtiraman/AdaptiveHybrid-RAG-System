@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 
 
 @dataclass
@@ -25,7 +25,7 @@ class ArxivMonitor:
 
     async def poll(self) -> list[dict]:
         # Placeholder polling logic for scaffold phase.
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
         items = [{"title": "Daily arXiv placeholder", "category": c, "fetched_at": now} for c in self.config.categories]
         self.last_digest = {"date": now, "items": items}
         return items

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -43,8 +45,67 @@ from .storage.relational_store import RelationalStore
 from .storage.vector_store import ChromaDBStore
 
 
+def _configure_app_state(app: FastAPI) -> None:
+    embedder = BGEEmbedder()
+    vector_store = ChromaDBStore()
+    bm25_store = BM25Store()
+    graph_store = Neo4jGraphStore()
+    relational_store = RelationalStore()
+    cache_store = SemanticCache(redis_url="redis://localhost:6379")
+    feedback_learner = FeedbackLearner()
+    annotation_store = AnnotationStore()
+    arxiv_monitor = ArxivMonitor()
+    privacy_processor = PrivacyProcessor()
+    query_planning_agent = QueryPlanningAgent()
+
+    pipeline = IngestionPipeline(
+        embedder=embedder,
+        vector_store=vector_store,
+        relational_store=relational_store,
+        bm25_store=bm25_store,
+        graph_store=graph_store,
+        cache_store=cache_store,
+        privacy_processor=privacy_processor,
+    )
+
+    retrieval_engine = HybridRetrievalEngine(
+        embedder=embedder,
+        vector_retriever=VectorRetriever(vector_store),
+        bm25_retriever=BM25Retriever(bm25_store),
+        graph_retriever=GraphRetriever(graph_store),
+    )
+
+    app.state.embedder = embedder
+    app.state.vector_store = vector_store
+    app.state.bm25_store = bm25_store
+    app.state.graph_store = graph_store
+    app.state.relational_store = relational_store
+    app.state.cache_store = cache_store
+    app.state.pipeline = pipeline
+    app.state.retrieval_engine = retrieval_engine
+    app.state.feedback_learner = feedback_learner
+    app.state.annotation_store = annotation_store
+    app.state.arxiv_monitor = arxiv_monitor
+    app.state.privacy_processor = privacy_processor
+    app.state.query_planning_agent = query_planning_agent
+    app.state.services = {
+        "embedder": embedder,
+        "analyzer": QueryAnalyzer(),
+        "answer_generator": AnswerGenerator(),
+        "verifier": SelfVerifier(),
+        "retrieval_engine": retrieval_engine,
+        "retrieval_filters_model": RetrievalFilters,
+    }
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    _configure_app_state(app)
+    yield
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(title="Advanced Hybrid RAG API", version="1.0.0", docs_url="/docs", redoc_url="/redoc")
+    app = FastAPI(title="Advanced Hybrid RAG API", version="1.0.0", docs_url="/docs", redoc_url="/redoc", lifespan=_lifespan)
 
     app.add_middleware(
         CORSMiddleware,
@@ -56,59 +117,6 @@ def create_app() -> FastAPI:
     app.add_middleware(AuthMiddleware, enabled=False)
     app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(GZipMiddleware, minimum_size=500)
-
-    @app.on_event("startup")
-    async def startup_event() -> None:
-        embedder = BGEEmbedder()
-        vector_store = ChromaDBStore()
-        bm25_store = BM25Store()
-        graph_store = Neo4jGraphStore()
-        relational_store = RelationalStore()
-        cache_store = SemanticCache(redis_url="redis://localhost:6379")
-        feedback_learner = FeedbackLearner()
-        annotation_store = AnnotationStore()
-        arxiv_monitor = ArxivMonitor()
-        privacy_processor = PrivacyProcessor()
-        query_planning_agent = QueryPlanningAgent()
-
-        pipeline = IngestionPipeline(
-            embedder=embedder,
-            vector_store=vector_store,
-            relational_store=relational_store,
-            bm25_store=bm25_store,
-            graph_store=graph_store,
-            cache_store=cache_store,
-            privacy_processor=privacy_processor,
-        )
-
-        retrieval_engine = HybridRetrievalEngine(
-            embedder=embedder,
-            vector_retriever=VectorRetriever(vector_store),
-            bm25_retriever=BM25Retriever(bm25_store),
-            graph_retriever=GraphRetriever(graph_store),
-        )
-
-        app.state.embedder = embedder
-        app.state.vector_store = vector_store
-        app.state.bm25_store = bm25_store
-        app.state.graph_store = graph_store
-        app.state.relational_store = relational_store
-        app.state.cache_store = cache_store
-        app.state.pipeline = pipeline
-        app.state.retrieval_engine = retrieval_engine
-        app.state.feedback_learner = feedback_learner
-        app.state.annotation_store = annotation_store
-        app.state.arxiv_monitor = arxiv_monitor
-        app.state.privacy_processor = privacy_processor
-        app.state.query_planning_agent = query_planning_agent
-        app.state.services = {
-            "embedder": embedder,
-            "analyzer": QueryAnalyzer(),
-            "answer_generator": AnswerGenerator(),
-            "verifier": SelfVerifier(),
-            "retrieval_engine": retrieval_engine,
-            "retrieval_filters_model": RetrievalFilters,
-        }
 
     app.include_router(health_router)
     app.include_router(ingest_router)
