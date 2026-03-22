@@ -15,6 +15,25 @@ type QueryResponse = {
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:8000';
 
+function normalizeText(text: string): string {
+  return (text || '')
+    .replace(/\s+/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .trim();
+}
+
+function toParagraphs(text: string): string[] {
+  const clean = normalizeText(text);
+  if (!clean) return [];
+  const sentences = clean.split(/(?<=[.!?])\s+/).filter(Boolean);
+  if (sentences.length <= 2) return [clean];
+  const out: string[] = [];
+  for (let i = 0; i < sentences.length; i += 2) {
+    out.push(`${sentences[i]} ${sentences[i + 1] ?? ''}`.trim());
+  }
+  return out;
+}
+
 export default function App() {
   const [paperFile, setPaperFile] = useState<File | null>(null);
   const [title, setTitle] = useState('');
@@ -24,6 +43,9 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState<QueryResponse | null>(null);
   const [status, setStatus] = useState('');
+
+  const answerParagraphs = useMemo(() => toParagraphs(response?.answer ?? ''), [response?.answer]);
+  const topClaims = useMemo(() => (response?.claims ?? []).slice(0, 6), [response?.claims]);
 
   const qualityLabel = useMemo(() => {
     if (!response) return 'N/A';
@@ -202,21 +224,72 @@ export default function App() {
               <div className="flex flex-wrap items-center gap-4 text-sm">
                 <span className="rounded-full bg-black/5 px-3 py-1">Quality: {qualityLabel}</span>
                 <span className="rounded-full bg-black/5 px-3 py-1">Retries: {response.retries}</span>
-                <span className="rounded-full bg-black/5 px-3 py-1">Latency: {response.latency_ms} ms</span>
+                <span className="rounded-full bg-black/5 px-3 py-1">Latency: {Math.round(response.latency_ms)} ms</span>
               </div>
-              <h2 className="mt-4 font-display text-2xl font-semibold">Answer</h2>
-              <p className="mt-2 leading-7">{response.answer}</p>
+              <div className="mt-4 flex items-center justify-between gap-3">
+                <h2 className="font-display text-2xl font-semibold">Paper Overview</h2>
+                <button
+                  onClick={() => navigator.clipboard.writeText(normalizeText(response.answer))}
+                  className="rounded-xl border border-black/15 px-3 py-1 text-sm hover:bg-black/5"
+                >
+                  Copy Answer
+                </button>
+              </div>
+
+              <div className="mt-4 grid gap-4 lg:grid-cols-[1.6fr_1fr]">
+                <div className="rounded-2xl border border-black/10 bg-white p-4">
+                  <h3 className="font-display text-lg font-semibold">Summary</h3>
+                  <div className="mt-3 space-y-3 text-[15px] leading-7 text-slate-800">
+                    {answerParagraphs.length > 0 ? (
+                      answerParagraphs.slice(0, 6).map((paragraph, idx) => (
+                        <p key={idx} className="break-words">
+                          {paragraph}
+                        </p>
+                      ))
+                    ) : (
+                      <p>No answer generated yet.</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-black/10 bg-black/[0.03] p-4">
+                  <h3 className="font-display text-lg font-semibold">Key Points</h3>
+                  {topClaims.length > 0 ? (
+                    <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-800">
+                      {topClaims.map((claim, idx) => (
+                        <li key={idx} className="break-words">{normalizeText(claim.claim)}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-3 text-sm text-slate-700">No extracted claims were returned for this response.</p>
+                  )}
+                </div>
+              </div>
 
               <h3 className="mt-6 flex items-center gap-2 font-display text-xl font-semibold"><FlaskConical className="h-5 w-5" /> Claim-level Citations</h3>
               <div className="mt-3 space-y-3">
-                {response.claims.map((claim, idx) => (
-                  <div key={idx} className="rounded-xl border border-black/10 p-3">
-                    <p className="font-medium">{claim.claim}</p>
-                    <pre className="mt-2 overflow-x-auto rounded-lg bg-black/5 p-2 text-xs">
-                      {JSON.stringify(claim.citations, null, 2)}
-                    </pre>
+                {topClaims.map((claim, idx) => (
+                  <div key={idx} className="rounded-xl border border-black/10 p-4">
+                    <p className="font-medium leading-7 break-words">{normalizeText(claim.claim)}</p>
+                    <div className="mt-3 grid gap-2">
+                      {(claim.citations ?? []).length > 0 ? (
+                        claim.citations.map((citation: any, cIdx: number) => (
+                          <div key={cIdx} className="rounded-lg bg-black/5 p-3 text-xs">
+                            <div><span className="font-semibold">paper:</span> {String(citation.paper_id ?? 'unknown')}</div>
+                            <div><span className="font-semibold">section:</span> {String(citation.section ?? 'n/a')}</div>
+                            <div><span className="font-semibold">page:</span> {String(citation.page_number ?? 'n/a')}</div>
+                            <div className="break-all"><span className="font-semibold">chunk:</span> {String(citation.chunk_id ?? 'n/a')}</div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="rounded-lg bg-black/5 p-3 text-xs">No citation metadata for this claim.</div>
+                      )}
+                    </div>
                   </div>
                 ))}
+                {topClaims.length === 0 && (
+                  <div className="rounded-xl border border-black/10 p-4 text-sm text-slate-700">No claim-level citations returned.</div>
+                )}
               </div>
             </motion.section>
           )}
