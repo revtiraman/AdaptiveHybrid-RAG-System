@@ -94,6 +94,7 @@ export const useRAGStore = create<RAGState>((set, get) => ({
 			correctiveIterations: data.corrective_iterations,
 			retrievalQuality: data.retrieval_quality,
 			groundingScore: data.grounding_score,
+			confidence: data.confidence,
 		};
 		set({
 			messages: [...get().messages, assistantMessage],
@@ -141,6 +142,7 @@ export const useRAGStore = create<RAGState>((set, get) => ({
 			correctiveIterations: response?.corrective_iterations,
 			retrievalQuality: response?.retrieval_quality,
 			groundingScore: response?.grounding_score,
+			confidence: response?.confidence,
 		};
 		set({
 			messages: items,

@@ -1,0 +1,40 @@
+2026-03-23 01:57:32,079 ERROR chromadb.telemetry.product.posthog request_id=- Failed to send telemetry event ClientStartEvent: capture() takes 1 positional argument but 3 were given
+2026-03-23 01:57:32,081 ERROR chromadb.telemetry.product.posthog request_id=- Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2026-03-23 01:57:32,082 ERROR chromadb.telemetry.product.posthog request_id=- Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2026-03-23 01:57:38,063 INFO sentence_transformers.SentenceTransformer request_id=- Use pytorch device_name: mps
+2026-03-23 01:57:38,063 INFO sentence_transformers.SentenceTransformer request_id=- Load pretrained SentenceTransformer: BAAI/bge-small-en-v1.5
+2026-03-23 01:57:46,463 INFO sentence_transformers.cross_encoder.CrossEncoder request_id=- Use pytorch device: mps
+INFO:     Started server process [21299]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:54149 - "GET /papers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54151 - "GET /papers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54151 - "GET /papers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54151 - "GET /papers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54155 - "GET /health/ready HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54166 - "GET /papers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54166 - "GET /papers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54198 - "GET /papers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54198 - "GET /papers HTTP/1.1" 200 OK
+2026-03-23 01:59:31,351 WARNING research_rag.hybrid.engines.pdf_parser request_id=5a52f9f2-b634-4315-b157-87bdeb6b3cdb Docling parser failed, falling back: No module named 'docling'
+2026-03-23 01:59:31,353 WARNING research_rag.hybrid.engines.pdf_parser request_id=5a52f9f2-b634-4315-b157-87bdeb6b3cdb Marker parser failed, falling back: No module named 'marker'
+INFO:     127.0.0.1:54231 - "POST /upload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54231 - "GET /papers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54261 - "OPTIONS /query HTTP/1.1" 200 OK
+2026-03-23 02:00:31,237 ERROR chromadb.telemetry.product.posthog request_id=f0f31739-e2ce-4d75-a3d1-9b71c0e1a842 Failed to send telemetry event CollectionQueryEvent: capture() takes 1 positional argument but 3 were given
+2026-03-23 02:00:31,317 ERROR chromadb.telemetry.product.posthog request_id=f0f31739-e2ce-4d75-a3d1-9b71c0e1a842 Failed to send telemetry event CollectionQueryEvent: capture() takes 1 positional argument but 3 were given
+Batches:   0%|          | 0/2 [00:00<?, ?it/s]Batches:  50%|█████     | 1/2 [00:01<00:01,  1.42s/it]Batches: 100%|██████████| 2/2 [00:02<00:00,  1.21s/it]Batches: 100%|██████████| 2/2 [00:02<00:00,  1.24s/it]
+INFO:     127.0.0.1:54261 - "POST /query HTTP/1.1" 200 OK
+Batches:   0%|          | 0/1 [00:00<?, ?it/s]Batches: 100%|██████████| 1/1 [00:00<00:00,  2.51it/s]Batches: 100%|██████████| 1/1 [00:00<00:00,  2.51it/s]
+INFO:     127.0.0.1:54303 - "POST /query HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54358 - "GET /papers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54359 - "GET /papers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54360 - "GET /papers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54361 - "GET /papers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54362 - "GET /papers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54363 - "GET /papers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54362 - "GET /papers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54359 - "GET /papers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57498 - "GET /papers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57498 - "GET /papers HTTP/1.1" 200 OK

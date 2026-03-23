@@ -27,6 +27,18 @@ def main() -> None:
     serve_parser.add_argument("--host", help="Override host binding")
     serve_parser.add_argument("--port", type=int, help="Override port")
 
+    arxiv_parser = subparsers.add_parser("arxiv-sync", help="Fetch and ingest recent relevant papers from ArXiv")
+    arxiv_parser.add_argument("--query", help="ArXiv search query (defaults from env)")
+    arxiv_parser.add_argument("--max-results", type=int, help="Max results to fetch")
+    arxiv_parser.add_argument("--days-back", type=int, help="Only include papers updated in last N days")
+    arxiv_parser.add_argument("--category", action="append", dest="categories", help="Allowed arXiv category (repeatable)")
+    arxiv_parser.add_argument("--term", action="append", dest="relevance_terms", help="Relevance term filter (repeatable)")
+    arxiv_parser.add_argument("--dry-run", action="store_true", help="Show matches without downloading/ingesting")
+
+    eval_parser = subparsers.add_parser("evaluate", help="Run evaluation harness on a QA dataset (JSON or JSONL)")
+    eval_parser.add_argument("--dataset", required=True, help="Path to eval dataset with question/expected_keywords")
+    eval_parser.add_argument("--limit", type=int, help="Optional max number of cases to evaluate")
+
     args = parser.parse_args()
     container = build_container()
 
@@ -79,6 +91,24 @@ def main() -> None:
             port=args.port or container.settings.port,
             reload=not container.settings.is_production,
         )
+        return
+
+    if args.command == "arxiv-sync":
+        summary = container.system.arxiv_sync(
+            query=args.query or container.settings.arxiv_default_query,
+            max_results=args.max_results or container.settings.arxiv_max_results,
+            days_back=args.days_back or container.settings.arxiv_days_back,
+            categories=args.categories or container.settings.arxiv_categories,
+            relevance_terms=args.relevance_terms or container.settings.arxiv_relevance_terms,
+            dry_run=bool(args.dry_run),
+        )
+        print(json.dumps(summary, indent=2))
+        return
+
+    if args.command == "evaluate":
+        summary = container.system.evaluate(dataset_path=args.dataset, limit=args.limit)
+        print(json.dumps(summary, indent=2))
+        return
 
 
 if __name__ == "__main__":

@@ -21,6 +21,9 @@ from .reranker import CrossEncoderReranker
 from .vector_retriever import VectorRetriever
 
 
+DEFAULT_EXCLUDE_SECTIONS = {"references", "bibliography", "acknowledgments"}
+
+
 class RetrievalFilters(BaseModel):
 	paper_ids: list[str] = Field(default_factory=list)
 	year_range: tuple[int, int] | None = None
@@ -120,11 +123,16 @@ class HybridRetrievalEngine:
 
 	def _apply_filters(self, items: list[SearchResult], filters: RetrievalFilters) -> list[SearchResult]:
 		out: list[SearchResult] = []
+		explicit_sections = {s.lower() for s in (filters.sections or [])}
+		allow_reference_sections = "references" in explicit_sections
 		for item in items:
 			md = item.chunk.metadata
 			if filters.paper_ids and md.doc_id not in filters.paper_ids:
 				continue
-			if filters.sections and md.section not in filters.sections:
+			section_name = (md.section or "").strip().lower()
+			if section_name in DEFAULT_EXCLUDE_SECTIONS and not allow_reference_sections:
+				continue
+			if filters.sections and section_name not in explicit_sections:
 				continue
 			out.append(item)
 		return out

@@ -135,6 +135,21 @@ export default function ChatInterface() {
 								{m.warnings.length > 4 && <div>+{m.warnings.length - 4} more warnings</div>}
 							</div>
 						)}
+						{m.role === "assistant" && m.confidence === "LOW" && (
+							<div
+								style={{
+									marginTop: 6,
+									background: "#fef3c7",
+									border: "1px solid #f59e0b",
+									color: "#7c2d12",
+									borderRadius: 8,
+									padding: "8px 10px",
+									fontSize: 12,
+								}}
+							>
+								Low confidence answer — retrieved context quality was poor.
+							</div>
+						)}
 						{m.role === "assistant" && (
 							<details style={{ marginTop: 6, fontSize: 12, color: "#374151" }}>
 								<summary style={{ cursor: "pointer" }}>Details</summary>

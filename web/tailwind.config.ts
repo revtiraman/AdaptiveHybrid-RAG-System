@@ -1,23 +1,56 @@
 import type { Config } from 'tailwindcss';
+import typography from '@tailwindcss/typography';
 
 export default {
-  content: ['./index.html', './src/**/*.{ts,tsx}'],
+  content: ['./src/**/*.{ts,tsx}'],
+  darkMode: 'class',
   theme: {
     extend: {
-      colors: {
-        canvas: '#F4EFE6',
-        ink: '#111827',
-        accent: '#0F766E',
-        signal: '#BE123C',
-      },
       fontFamily: {
-        display: ['Space Grotesk', 'sans-serif'],
-        body: ['IBM Plex Sans', 'sans-serif'],
+        sans: ['Inter var', 'Inter', 'system-ui', 'sans-serif'],
+        mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
       },
-      backgroundImage: {
-        mesh: 'radial-gradient(circle at 15% 20%, rgba(15,118,110,0.15), transparent 40%), radial-gradient(circle at 85% 0%, rgba(190,18,60,0.12), transparent 35%), linear-gradient(180deg, #f4efe6 0%, #ffffff 60%)',
+      colors: {
+        surface: {
+          primary: 'hsl(var(--surface-primary) / <alpha-value>)',
+          secondary: 'hsl(var(--surface-secondary) / <alpha-value>)',
+          tertiary: 'hsl(var(--surface-tertiary) / <alpha-value>)',
+        },
+        text: {
+          primary: 'hsl(var(--text-primary) / <alpha-value>)',
+          secondary: 'hsl(var(--text-secondary) / <alpha-value>)',
+        },
+        claim: { DEFAULT: '#E1F5EE', text: '#085041' },
+        context: { DEFAULT: '#E6F1FB', text: '#0C447C' },
+        result: { DEFAULT: '#E1F5EE', text: '#085041' },
+        method: { DEFAULT: '#E6F1FB', text: '#0C447C' },
+        comp: { DEFAULT: '#EEEDFE', text: '#3C3489' },
+        def: { DEFAULT: '#FAEEDA', text: '#633806' },
+        figure: { DEFAULT: '#EEEDFE', text: '#3C3489' },
+        table: { DEFAULT: '#FAEEDA', text: '#633806' },
       },
+      animation: {
+        'stream-in': 'stream-in 80ms ease forwards',
+        shimmer: 'shimmer 1.4s ease infinite',
+        'fade-up': 'fade-up 200ms ease',
+      },
+      keyframes: {
+        'stream-in': {
+          from: { opacity: '0', transform: 'translateY(2px)' },
+          to: { opacity: '1', transform: 'translateY(0)' },
+        },
+        shimmer: {
+          '0%': { backgroundPosition: '-200% 0' },
+          '100%': { backgroundPosition: '200% 0' },
+        },
+        'fade-up': {
+          from: { opacity: '0', transform: 'translateY(8px)' },
+          to: { opacity: '1', transform: 'translateY(0)' },
+        },
+      },
+      borderWidth: { DEFAULT: '0.5px' },
+      borderRadius: { sm: '6px', md: '8px', lg: '12px', xl: '16px' },
     },
   },
-  plugins: [],
+  plugins: [typography],
 } satisfies Config;

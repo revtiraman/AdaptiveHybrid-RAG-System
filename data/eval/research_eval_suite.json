@@ -1,0 +1,62 @@
+[
+  {
+    "question": "What is the main problem addressed by the paper?",
+    "expected_keywords": ["problem", "approach", "objective"],
+    "paper_ids": []
+  },
+  {
+    "question": "What method or architecture is proposed?",
+    "expected_keywords": ["method", "model", "architecture"],
+    "paper_ids": []
+  },
+  {
+    "question": "Which datasets are used for evaluation?",
+    "expected_keywords": ["dataset", "benchmark", "evaluation"],
+    "paper_ids": []
+  },
+  {
+    "question": "What metrics are reported in the results?",
+    "expected_keywords": ["accuracy", "score", "metric"],
+    "paper_ids": []
+  },
+  {
+    "question": "How does the method compare against baselines?",
+    "expected_keywords": ["baseline", "compare", "improve"],
+    "paper_ids": []
+  },
+  {
+    "question": "What are the key quantitative findings?",
+    "expected_keywords": ["results", "performance", "improvement"],
+    "paper_ids": []
+  },
+  {
+    "question": "What assumptions or constraints does the method have?",
+    "expected_keywords": ["assumption", "constraint", "setting"],
+    "paper_ids": []
+  },
+  {
+    "question": "What limitations are discussed by the authors?",
+    "expected_keywords": ["limitation", "future work", "weakness"],
+    "paper_ids": []
+  },
+  {
+    "question": "What ablation studies are included and why?",
+    "expected_keywords": ["ablation", "component", "effect"],
+    "paper_ids": []
+  },
+  {
+    "question": "What role do tables play in the evidence?",
+    "expected_keywords": ["table", "comparison", "numbers"],
+    "paper_ids": []
+  },
+  {
+    "question": "How does the paper justify the claimed improvements?",
+    "expected_keywords": ["evidence", "justification", "experiment"],
+    "paper_ids": []
+  },
+  {
+    "question": "What is the overall takeaway from this paper?",
+    "expected_keywords": ["summary", "conclusion", "impact"],
+    "paper_ids": []
+  }
+]

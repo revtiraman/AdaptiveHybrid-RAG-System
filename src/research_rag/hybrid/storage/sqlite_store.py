@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from research_rag.hybrid.domain import PaperRecord, SectionChunk
+from research_rag.hybrid.domain import ClaimRecord, PaperRecord, SectionChunk
 
 
 class MetadataStore:
@@ -54,6 +55,25 @@ class MetadataStore:
                 CREATE INDEX IF NOT EXISTS idx_chunks_paper ON chunks(paper_id);
                 CREATE INDEX IF NOT EXISTS idx_chunks_section ON chunks(section);
                 CREATE INDEX IF NOT EXISTS idx_chunks_page ON chunks(page_number);
+
+                CREATE TABLE IF NOT EXISTS claims (
+                    claim_id TEXT PRIMARY KEY,
+                    paper_id TEXT NOT NULL,
+                    chunk_id TEXT NOT NULL,
+                    claim TEXT NOT NULL,
+                    claim_type TEXT NOT NULL,
+                    section TEXT NOT NULL,
+                    page_number INTEGER NOT NULL,
+                    entities_json TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(paper_id) REFERENCES papers(paper_id) ON DELETE CASCADE,
+                    FOREIGN KEY(chunk_id) REFERENCES chunks(chunk_id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_claims_paper ON claims(paper_id);
+                CREATE INDEX IF NOT EXISTS idx_claims_type ON claims(claim_type);
                 """
             )
 
@@ -174,3 +194,138 @@ class MetadataStore:
         with self._connect() as conn:
             row = conn.execute("SELECT COUNT(*) AS c FROM chunks").fetchone()
         return int(row["c"])
+
+    def replace_claims(self, paper_id: str, claims: list[ClaimRecord], created_at: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM claims WHERE paper_id = ?", (paper_id,))
+            if not claims:
+                return
+            conn.executemany(
+                """
+                INSERT INTO claims (
+                    claim_id, paper_id, chunk_id, claim, claim_type, section,
+                    page_number, entities_json, confidence, metadata_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        claim.claim_id,
+                        claim.paper_id,
+                        claim.chunk_id,
+                        claim.claim,
+                        claim.claim_type,
+                        claim.section,
+                        claim.page_number,
+                        json.dumps(claim.entities),
+                        claim.confidence,
+                        json.dumps(claim.metadata),
+                        created_at,
+                    )
+                    for claim in claims
+                ],
+            )
+
+    def count_claims(self, paper_id: str | None = None) -> int:
+        with self._connect() as conn:
+            if paper_id:
+                row = conn.execute("SELECT COUNT(*) AS c FROM claims WHERE paper_id = ?", (paper_id,)).fetchone()
+            else:
+                row = conn.execute("SELECT COUNT(*) AS c FROM claims").fetchone()
+        return int(row["c"])
+
+    def fetch_chunk_samples(self, paper_id: str, limit: int = 5) -> list[dict[str, object]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT c.chunk_id, c.paper_id, c.page_number, c.section, c.ordinal, c.text,
+                       COUNT(cl.claim_id) AS claim_count
+                FROM chunks c
+                LEFT JOIN claims cl ON c.chunk_id = cl.chunk_id
+                WHERE c.paper_id = ?
+                GROUP BY c.chunk_id, c.paper_id, c.page_number, c.section, c.ordinal, c.text
+                ORDER BY c.ordinal ASC
+                LIMIT ?
+                """,
+                (paper_id, max(1, int(limit))),
+            ).fetchall()
+
+        out: list[dict[str, object]] = []
+        for row in rows:
+            text = str(row["text"] or "")
+            lower = text.lower()
+            out.append(
+                {
+                    "chunk_id": row["chunk_id"],
+                    "paper_id": row["paper_id"],
+                    "page_number": int(row["page_number"]),
+                    "section": row["section"],
+                    "ordinal": int(row["ordinal"]),
+                    "text_preview": text[:320],
+                    "char_count": len(text),
+                    "claim_count": int(row["claim_count"]),
+                    "looks_like_reference": bool(
+                        re.search(r"\[\d+\]\s+[A-Z][a-z]+", text)
+                        or re.search(r"(?m)^\s*\d+\.\s+[A-Z][a-z]+.+\(\d{4}\)", text)
+                    ),
+                    "looks_like_noise": any(
+                        marker in lower
+                        for marker in ["example query", "grounding:", "mode:", "sub-questions generated"]
+                    ),
+                }
+            )
+        return out
+
+    def fetch_paper_structure(self, paper_id: str) -> dict[str, object]:
+        chunks = self.fetch_chunks([paper_id])
+
+        section_chunk_counts: dict[str, int] = {}
+        section_table_counts: dict[str, int] = {}
+        noisy_chunks = 0
+        reference_chunks = 0
+
+        for chunk in chunks:
+            section = (chunk.section or "unknown").strip().lower() or "unknown"
+            section_chunk_counts[section] = section_chunk_counts.get(section, 0) + 1
+            if str(chunk.metadata.get("content_type", "")).lower() == "table":
+                section_table_counts[section] = section_table_counts.get(section, 0) + 1
+
+            lower = (chunk.text or "").lower()
+            if any(marker in lower for marker in ["example query", "grounding:", "mode:", "sub-questions generated"]):
+                noisy_chunks += 1
+            if re.search(r"\[\d+\]\s+[A-Z][a-z]+", chunk.text or ""):
+                reference_chunks += 1
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT section, COUNT(*) AS c
+                FROM claims
+                WHERE paper_id = ?
+                GROUP BY section
+                """,
+                (paper_id,),
+            ).fetchall()
+
+        section_claim_counts = {str(row["section"] or "unknown").strip().lower(): int(row["c"]) for row in rows}
+
+        sections: list[dict[str, object]] = []
+        for section in sorted(set(section_chunk_counts) | set(section_claim_counts) | set(section_table_counts)):
+            sections.append(
+                {
+                    "section": section,
+                    "chunk_count": section_chunk_counts.get(section, 0),
+                    "claim_count": section_claim_counts.get(section, 0),
+                    "table_count": section_table_counts.get(section, 0),
+                }
+            )
+
+        return {
+            "paper_id": paper_id,
+            "section_count": len(sections),
+            "total_chunks": len(chunks),
+            "total_claims": sum(section_claim_counts.values()),
+            "total_tables": sum(section_table_counts.values()),
+            "reference_chunk_count": reference_chunks,
+            "noisy_chunk_count": noisy_chunks,
+            "sections": sections,
+        }

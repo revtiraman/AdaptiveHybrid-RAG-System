@@ -23,6 +23,29 @@ class QueryRequest(BaseModel):
     filters: dict[str, Any] | None = Field(default=None, description="Optional metadata filters")
 
 
+class ChunkSampleRequest(BaseModel):
+    paper_id: str = Field(..., min_length=1)
+    limit: int = Field(default=5, ge=1, le=50)
+
+
+class PaperStructureRequest(BaseModel):
+    paper_id: str = Field(..., min_length=1)
+
+
+class ArxivSyncRequest(BaseModel):
+    query: str | None = Field(default=None, min_length=1)
+    max_results: int | None = Field(default=None, ge=1, le=100)
+    days_back: int | None = Field(default=None, ge=1, le=365)
+    categories: list[str] | None = None
+    relevance_terms: list[str] | None = None
+    dry_run: bool = False
+
+
+class EvalRunRequest(BaseModel):
+    dataset_path: str = Field(..., min_length=1)
+    limit: int | None = Field(default=None, ge=1, le=1000)
+
+
 def create_app() -> FastAPI:
     settings = HybridRAGSettings.from_env()
     container = build_container(settings)
@@ -141,6 +164,52 @@ def create_app() -> FastAPI:
                 "hallucination_policy": "self-verified with retries",
             },
         }
+
+    @app.post("/debug/chunk-sample")
+    async def debug_chunk_sample(request: Request, payload: ChunkSampleRequest) -> dict[str, Any]:
+        container = _container(request)
+        paper = container.system.metadata_store.get_paper(payload.paper_id)
+        if paper is None:
+            raise HTTPException(status_code=404, detail=f"Unknown paper_id: {payload.paper_id}")
+
+        samples = container.system.metadata_store.fetch_chunk_samples(payload.paper_id, limit=payload.limit)
+        return {
+            "paper_id": payload.paper_id,
+            "title": paper.title,
+            "sample_count": len(samples),
+            "chunks": samples,
+        }
+
+    @app.post("/debug/paper-structure")
+    async def debug_paper_structure(request: Request, payload: PaperStructureRequest) -> dict[str, Any]:
+        container = _container(request)
+        paper = container.system.metadata_store.get_paper(payload.paper_id)
+        if paper is None:
+            raise HTTPException(status_code=404, detail=f"Unknown paper_id: {payload.paper_id}")
+
+        structure = container.system.metadata_store.fetch_paper_structure(payload.paper_id)
+        structure["title"] = paper.title
+        return structure
+
+    @app.post("/pipeline/arxiv/sync")
+    async def arxiv_sync(request: Request, payload: ArxivSyncRequest) -> dict[str, Any]:
+        container = _container(request)
+        return container.system.arxiv_sync(
+            query=payload.query or container.settings.arxiv_default_query,
+            max_results=payload.max_results or container.settings.arxiv_max_results,
+            days_back=payload.days_back or container.settings.arxiv_days_back,
+            categories=payload.categories or container.settings.arxiv_categories,
+            relevance_terms=payload.relevance_terms or container.settings.arxiv_relevance_terms,
+            dry_run=payload.dry_run,
+        )
+
+    @app.post("/eval/run")
+    async def eval_run(request: Request, payload: EvalRunRequest) -> dict[str, Any]:
+        container = _container(request)
+        try:
+            return container.system.evaluate(dataset_path=payload.dataset_path, limit=payload.limit)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     return app
 

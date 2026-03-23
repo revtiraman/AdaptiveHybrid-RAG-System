@@ -31,6 +31,20 @@ class SectionChunk:
 
 
 @dataclass(slots=True)
+class ClaimRecord:
+    claim_id: str
+    paper_id: str
+    chunk_id: str
+    claim: str
+    claim_type: Literal["result", "method", "definition", "comparison", "limitation"]
+    section: str
+    page_number: int
+    entities: list[str] = field(default_factory=list)
+    confidence: float = 0.0
+    metadata: JsonDict = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class RetrievalCandidate:
     chunk: SectionChunk
     vector_rank: int | None
@@ -39,6 +53,8 @@ class RetrievalCandidate:
     bm25_score: float
     rrf_score: float
     rerank_score: float = 0.0
+    claim_text: str | None = None
+    context_type: Literal["chunk", "claim"] = "chunk"
 
 
 @dataclass(slots=True)
@@ -52,6 +68,8 @@ class VerificationResult:
     supported: bool
     confidence: float
     unsupported_claims: list[str]
+    issues: list[dict[str, str]] = field(default_factory=list)
+    stage_scores: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

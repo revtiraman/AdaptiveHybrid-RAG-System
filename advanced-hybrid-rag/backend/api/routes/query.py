@@ -117,12 +117,11 @@ async def query(request: Request, body: QueryBody):
 
 	if adaptive_allowed:
 		max_retries = max(0, int(adaptive_cfg.max_corrective_retries))
-		quality_threshold = float(adaptive_cfg.quality_threshold)
 
 		for attempt in range(1, max_retries + 1):
 			quality = quality_scorer.score(body.query, query_emb, retrieval.chunks)
 			verification_passed = verify is None or verify.passed
-			if quality.overall_quality >= quality_threshold and verification_passed:
+			if verification_passed and not adaptive_controller.should_retry(quality.overall_quality, attempt - 1):
 				break
 
 			params = await adaptive_controller.optimize_retrieval(
@@ -151,6 +150,13 @@ async def query(request: Request, body: QueryBody):
 		response.warnings = list(dict.fromkeys(corrected.get("warnings", response.warnings)))
 		if isinstance(corrected.get("corrective_labels"), dict):
 			response.warnings.append(f"Corrective labels: {corrected['corrective_labels']}")
+
+	if response.grounding_score < 0.3 and response.corrective_iterations == 0:
+		response.warnings.append(
+			"Retrieved context quality is low — answer may not be reliable. "
+			"Try rephrasing your question or check if the paper covers this topic."
+		)
+		response.confidence = "LOW"
 
 	return response.model_dump()
 

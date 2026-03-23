@@ -10,10 +10,14 @@ The project is designed to work in two modes:
 ## What is included
 
 - FastAPI service with health checks and typed JSON endpoints.
-- Optional API-key auth with tenant isolation for SaaS-style deployments.
-- CLI for ingestion, querying, document listing, and serving.
+- CLI for ingestion, querying, ArXiv sync, evaluation runs, document listing, and serving.
 - SQLite vector store with document metadata and chunk persistence.
 - PDF ingestion pipeline with managed document storage under `data/documents/`.
+- Smart parser fallback path (docling/marker/bbox/legacy) with extraction diagnostics.
+- Claim extraction + claim-level retrieval fusion + citation-chain augmentation.
+- Multi-stage self-verifier with stage scores and issue diagnostics.
+- Evaluation harness for dataset-based quality regression checks.
+- Frontend document structure viewer backed by debug APIs.
 - Sentence-aware chunking with overlap to preserve context continuity.
 - Pluggable embeddings and answer generation providers.
 - Dockerfile, Makefile, env template, and unit tests.
@@ -125,7 +129,48 @@ PYTHONPATH=src python3 -m research_rag.cli query \
   --question "Summarize the main problem, method, and conclusions."
 ```
 
-### 5. Run the API
+### 5. ArXiv auto-pipeline (dry run first)
+
+```bash
+PYTHONPATH=src python3 -m research_rag.cli arxiv-sync \
+  --dry-run --max-results 5 --days-back 30
+```
+
+Then run without `--dry-run` to download and ingest matches.
+
+### 6. Evaluation harness
+
+Create a JSON dataset like this:
+
+```json
+[
+  {
+    "question": "What is the paper about?",
+    "expected_keywords": ["retrieval", "generation"],
+    "paper_ids": []
+  }
+]
+```
+
+Run evaluation:
+
+```bash
+PYTHONPATH=src python3 -m research_rag.cli evaluate --dataset data/eval/smoke_eval.json
+```
+
+Included stronger suite:
+
+- `data/eval/research_eval_suite.json` (12 research-oriented cases)
+
+Run it:
+
+```bash
+PYTHONPATH=src python3 -m research_rag.cli evaluate --dataset data/eval/research_eval_suite.json --limit 12
+```
+
+Frontend also supports this via the **Evaluation Harness** panel.
+
+### 7. Run the API
 
 ```bash
 uvicorn research_rag.api.app:create_app --factory --host 0.0.0.0 --port 8000 --reload
@@ -143,52 +188,74 @@ Basic liveness probe.
 
 Readiness probe showing storage path, provider selection, and indexed document count.
 
-### `GET /v1/documents`
+### `GET /papers`
 
 Lists indexed documents.
 
-When `API_KEYS` is configured, this endpoint returns only the authenticated tenant's documents.
+### `POST /upload`
 
-### `POST /v1/documents/ingest`
+Multipart body:
 
-Request body:
+- `file`: PDF file (required)
+- `title`: Optional title
+- `paper_id`: Optional stable ID
 
-```json
-{
-  "pdf_path": "/absolute/path/to/paper.pdf",
-  "document_id": "optional-stable-id",
-  "metadata": {
-    "source": "manual-upload"
-  }
-}
-```
-
-SaaS mode behavior:
-
-- requires `x-api-key` or bearer auth
-- stores `tenant_id` metadata automatically
-- namespaces `document_id` per tenant to avoid collisions
-
-### `POST /v1/query`
+### `POST /query`
 
 Request body:
 
 ```json
 {
   "question": "What evaluation metrics were reported?",
-  "top_k": 5,
-  "document_id": "optional-doc-filter"
+  "paper_ids": ["optional-paper-id"],
+  "filters": {
+    "section": "optional-section"
+  }
 }
 ```
-
-In SaaS mode, retrieval is automatically tenant-scoped even when `document_id` is omitted.
 
 Response includes:
 
 - answer text
-- citations with page numbers and chunk identifiers
-- retrieved chunk previews and similarity scores
-- generator/provider name
+- claim-level citations with page numbers and chunk identifiers
+- retrieval quality, retries, and latency
+- diagnostic verification payload (`supported`, `confidence`, `issues`, `stage_scores`)
+
+### `POST /pipeline/arxiv/sync`
+
+Triggers ArXiv fetch/filter/download/ingest pipeline.
+
+Request body:
+
+```json
+{
+  "query": "retrieval augmented generation",
+  "max_results": 10,
+  "days_back": 30,
+  "categories": ["cs.AI", "cs.CL", "cs.LG"],
+  "relevance_terms": ["rag", "retrieval", "question answering"],
+  "dry_run": true
+}
+```
+
+### `POST /eval/run`
+
+Run the evaluation harness against a JSON or JSONL dataset.
+
+```json
+{
+  "dataset_path": "data/eval/smoke_eval.json",
+  "limit": 10
+}
+```
+
+### `POST /debug/chunk-sample`
+
+Returns sampled chunk diagnostics for a paper.
+
+### `POST /debug/paper-structure`
+
+Returns section-level structure stats (`chunk_count`, `claim_count`, `table_count`) and quality indicators used by the frontend structure viewer.
 
 ## Make targets
 

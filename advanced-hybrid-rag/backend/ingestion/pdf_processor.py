@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 from pathlib import Path
@@ -10,19 +11,25 @@ from uuid import uuid4
 from .models import DocumentMetadata, Figure, ProcessedDocument, Reference, Section, Table
 
 
-SECTION_PATTERNS = [
-	r"^abstract$",
-	r"^introduction$",
-	r"^related\s+work$",
-	r"^background$",
-	r"^method(?:ology|s)?$",
-	r"^experiments?$",
-	r"^results?$",
-	r"^discussion$",
-	r"^conclusion$",
-	r"^references$",
-	r"^appendix$",
+logger = logging.getLogger(__name__)
+
+
+SECTION_PATTERNS: list[tuple[str, str]] = [
+	("references", r"^\s*references?\s*$"),
+	("bibliography", r"^\s*bibliograph\w*\s*$"),
+	("appendix", r"^\s*appendix\s*[a-z]?\s*$"),
+	("conclusion", r"^\s*conclusions?\s*(and\s+future\s+work)?\s*$"),
+	("discussion", r"^\s*discussion\s*$"),
+	("results", r"^\s*(results|experiments?\s+and\s+results)\s*$"),
+	("experiments", r"^\s*experiments?\s*$"),
+	("method", r"^\s*(method(olog)?|approach|model)\s*$"),
+	("related_work", r"^\s*related\s+work\s*$"),
+	("introduction", r"^\s*introduction\s*$"),
+	("abstract", r"^\s*abstract\s*$"),
 ]
+
+
+EXCLUDED_FROM_RETRIEVAL = {"references", "bibliography", "acknowledgments"}
 
 
 class PDFProcessor:
@@ -32,13 +39,20 @@ class PDFProcessor:
 		"""Process a PDF into normalized text, sections, and metadata."""
 		path = Path(file_path)
 		raw_text, page_texts = self._extract_with_pymupdf(path)
+		quality = self.detect_extraction_quality(raw_text)
+		if raw_text.strip() and quality < 0.5:
+			logger.warning("Low pymupdf extraction quality (%.3f) for %s. Trying pdfplumber fallback.", quality, path)
+			plumber_text, plumber_pages = self._extract_with_pdfplumber_text(path)
+			if plumber_text.strip() and self.detect_extraction_quality(plumber_text) >= quality:
+				raw_text, page_texts = plumber_text, plumber_pages
+
 		if not raw_text.strip():
 			raw_text, page_texts = self._extract_with_pypdf(path)
 
 		raw_text = self._clean_text(raw_text)
 		tables = self._extract_tables(path)
 		figures = self._extract_figure_captions(page_texts)
-		sections = self._detect_sections(page_texts)
+		sections = self.detect_sections(page_texts)
 		metadata = self._extract_metadata(path, page_texts)
 		metadata.language = self.detect_language(raw_text)
 		references = self.extract_references(raw_text)
@@ -101,7 +115,22 @@ class PDFProcessor:
 			doc = fitz.open(file_path)
 			pages: list[str] = []
 			for page in doc:
-				pages.append(page.get_text("text"))
+				# Trigger dict extraction path for robust layout-aware text reconstruction.
+				_ = page.get_text("dict")
+				pages.append(self._page_text_from_words(page.get_text("words")))
+			return "\n\n".join(pages), pages
+		except Exception:
+			return "", []
+
+	def _extract_with_pdfplumber_text(self, file_path: Path) -> tuple[str, list[str]]:
+		"""Text extraction fallback via pdfplumber when quality is poor."""
+		try:
+			import pdfplumber  # type: ignore
+
+			pages: list[str] = []
+			with pdfplumber.open(file_path) as pdf:
+				for page in pdf.pages:
+					pages.append(page.extract_text() or "")
 			return "\n\n".join(pages), pages
 		except Exception:
 			return "", []
@@ -141,7 +170,7 @@ class PDFProcessor:
 				figures.append(Figure(page=idx, caption=match.group(1).strip()))
 		return figures
 
-	def _detect_sections(self, page_texts: list[str]) -> list[Section]:
+	def detect_sections(self, page_texts: list[str]) -> list[Section]:
 		"""Split document into logical sections based on heading patterns."""
 		full = "\n".join(page_texts)
 		lines = full.splitlines()
@@ -156,9 +185,12 @@ class PDFProcessor:
 				return
 			section_text = "\n".join(buf).strip()
 			if section_text:
+				section_name = current_name
+				if self._looks_like_references(section_text):
+					section_name = "references"
 				sections.append(
 					Section(
-						name=current_name,
+						name=section_name,
 						text=section_text,
 						page_start=current_start,
 						page_end=max(current_start, end_line),
@@ -166,11 +198,11 @@ class PDFProcessor:
 				)
 
 		for i, line in enumerate(lines, start=1):
-			normalized = re.sub(r"\s+", " ", line.strip()).lower()
-			is_heading = any(re.match(pattern, normalized) for pattern in SECTION_PATTERNS)
-			if is_heading:
+			normalized = re.sub(r"\s+", " ", line.strip())
+			heading = self._match_section_heading(normalized)
+			if heading:
 				flush(i)
-				current_name = line.strip().title()
+				current_name = heading
 				current_start = i
 				buf = []
 				continue
@@ -178,6 +210,17 @@ class PDFProcessor:
 
 		flush(len(lines))
 		return sections if sections else [Section(name="Document", text=full, page_start=1, page_end=max(1, len(page_texts)))]
+
+	def _match_section_heading(self, line: str) -> str | None:
+		for section_name, pattern in SECTION_PATTERNS:
+			if re.match(pattern, line.strip(), flags=re.I):
+				return section_name
+		return None
+
+	def _looks_like_references(self, section_text: str) -> bool:
+		citation_lines = re.findall(r"\[\d+\]\s+[A-Z][a-z]+", section_text)
+		numbered_refs = re.findall(r"(?m)^\s*\d+\.\s+[A-Z][a-z]+.+\(\d{4}\)", section_text)
+		return (len(citation_lines) + len(numbered_refs)) >= 3
 
 	def _extract_metadata(self, file_path: Path, page_texts: list[str]) -> DocumentMetadata:
 		"""Heuristic metadata extraction from title page and text patterns."""
@@ -208,11 +251,77 @@ class PDFProcessor:
 
 	def _clean_text(self, text: str) -> str:
 		"""Normalize text artifacts commonly seen in extracted PDFs."""
-		text = text.replace("\ufb01", "fi").replace("\ufb02", "fl")
-		text = re.sub(r"-\n([a-z])", r"\1", text)
-		text = re.sub(r"[ \t]+", " ", text)
+		text = (
+			(text or "")
+			.replace("ﬁ", "fi")
+			.replace("ﬂ", "fl")
+			.replace("ﬀ", "ff")
+			.replace("ﬃ", "ffi")
+		)
+		text = re.sub(r"(\w+)-\n(\w+)", r"\1\2", text)
+		text = unicodedata.normalize("NFKC", text)
+		text = re.sub(r"[\u200b\u200c\u200d\ufeff]", "", text)
+		text = re.sub(r"  +", " ", text)
 		text = re.sub(r"\n{3,}", "\n\n", text)
-		return unicodedata.normalize("NFKC", text).strip()
+		return text.strip()
+
+	def detect_extraction_quality(self, text: str) -> float:
+		"""Score extracted text quality in [0, 1] using spacing and token sanity heuristics."""
+		if not text:
+			return 0.0
+
+		total = max(1, len(text))
+		space_ratio = text.count(" ") / total
+		alpha_ratio = sum(1 for ch in text if ch.isalpha()) / total
+		words = re.findall(r"[A-Za-z]+", text)
+		avg_word_len = (sum(len(w) for w in words) / max(1, len(words))) if words else 0.0
+
+		space_score = max(0.0, 1.0 - min(1.0, abs(space_ratio - 0.17) / 0.17))
+		alpha_score = min(1.0, alpha_ratio / 0.6)
+		if 3.0 <= avg_word_len <= 8.0:
+			word_score = 1.0
+		elif 2.0 <= avg_word_len <= 12.0:
+			word_score = 0.6
+		else:
+			word_score = 0.2
+
+		score = (0.4 * space_score) + (0.35 * alpha_score) + (0.25 * word_score)
+		return float(max(0.0, min(1.0, score)))
+
+	def _page_text_from_words(self, words: list[tuple]) -> str:
+		if not words:
+			return ""
+
+		sorted_words = sorted(words, key=lambda w: (int(w[5]), int(w[6]), int(w[7])))
+		lines: list[str] = []
+		current_line_key: tuple[int, int] | None = None
+		current_parts: list[str] = []
+		prev_x1: float | None = None
+
+		for word in sorted_words:
+			x0, _y0, x1, _y1, token, block_num, line_num, _word_num = word
+			if not isinstance(token, str) or not token.strip():
+				continue
+
+			line_key = (int(block_num), int(line_num))
+			if current_line_key != line_key:
+				if current_parts:
+					lines.append("".join(current_parts).strip())
+				current_parts = [token.strip()]
+				current_line_key = line_key
+				prev_x1 = float(x1)
+				continue
+
+			x_gap = float(x0) - float(prev_x1 or x0)
+			if x_gap > 1.5:
+				current_parts.append(" ")
+			current_parts.append(token.strip())
+			prev_x1 = float(x1)
+
+		if current_parts:
+			lines.append("".join(current_parts).strip())
+
+		return "\n".join(line for line in lines if line)
 
 
 __all__ = ["PDFProcessor"]

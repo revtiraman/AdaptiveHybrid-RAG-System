@@ -11,6 +11,7 @@ export interface Message {
 	correctiveIterations?: number;
 	retrievalQuality?: number;
 	groundingScore?: number;
+	confidence?: "HIGH" | "MEDIUM" | "LOW";
 	rating?: "up" | "down";
 }
 

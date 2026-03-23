@@ -6,8 +6,12 @@ from time import perf_counter
 from research_rag.hybrid.config import HybridRAGSettings
 from research_rag.hybrid.domain import QueryResult
 from research_rag.hybrid.engines.adaptive_engine import AdaptiveCorrectiveEngine
+from research_rag.hybrid.engines.arxiv_pipeline import ArxivAutoPipeline
 from research_rag.hybrid.engines.chunker import SectionAwareChunker
+from research_rag.hybrid.engines.citation_chain_retriever import CitationChainRetriever
+from research_rag.hybrid.engines.context_enricher import ContextEnricher
 from research_rag.hybrid.engines.embedding import BGEEmbedder, CrossEncoderReranker
+from research_rag.hybrid.engines.eval_harness import EvaluationHarness
 from research_rag.hybrid.engines.ingestion_engine import IngestionEngine
 from research_rag.hybrid.engines.llm import LLMClient
 from research_rag.hybrid.engines.pdf_parser import PDFParser
@@ -60,7 +64,11 @@ class HybridRAGSystem:
 
         self.ingestion = IngestionEngine(
             settings=settings,
-            parser=PDFParser(enable_pdfplumber=settings.enable_pdfplumber),
+            parser=PDFParser(
+                enable_pdfplumber=settings.enable_pdfplumber,
+                enable_docling=settings.enable_docling,
+                enable_marker=settings.enable_marker,
+            ),
             chunker=SectionAwareChunker(chunk_chars=settings.chunk_chars, overlap=settings.chunk_overlap),
             embedder=self.embedder,
             vector_store=self.vector_store,
@@ -75,11 +83,15 @@ class HybridRAGSystem:
         )
         self.reasoning = ReasoningEngine(llm_client=llm_client)
         self._active_llm_provider = llm_client.provider if llm_client else "none"
+        self.context_enricher = ContextEnricher()
+        self.citation_chain = CitationChainRetriever(self.metadata_store)
         self.adaptive = AdaptiveCorrectiveEngine(
             base_k=settings.base_k,
             max_k=settings.max_k,
             max_retries=settings.max_retries,
         )
+        self.arxiv_pipeline = ArxivAutoPipeline(system=self, documents_dir=settings.documents_dir)
+        self.evaluation_harness = EvaluationHarness(system=self)
 
     def ingest_pdf(self, pdf_path: str, title: str | None = None, paper_id: str | None = None) -> dict[str, object]:
         return self.ingestion.ingest_pdf(pdf_path=pdf_path, title=title, paper_id=paper_id).to_dict()
@@ -94,6 +106,7 @@ class HybridRAGSystem:
         final_claims = []
         verification = None
         quality = 0.0
+        citation_augmented_count = 0
 
         while True:
             k = self.adaptive.choose_k(quality=quality, retry_count=retries, query_type=plan.query_type)
@@ -104,7 +117,28 @@ class HybridRAGSystem:
                 filters=filters,
                 per_section_cap=3,
             )
+
+            if self.settings.use_citation_chain and plan.query_type == "multi_hop":
+                citation_candidates = self.citation_chain.retrieve_with_citations(
+                    query=question,
+                    primary_candidates=candidates,
+                    max_papers=self.settings.citation_chain_max_papers,
+                    top_chunks_per_paper=2,
+                )
+                if citation_candidates:
+                    citation_augmented_count = len(citation_candidates)
+                    candidates = sorted(candidates + citation_candidates, key=lambda item: item.rrf_score, reverse=True)
+                    candidates = candidates[: max(k, len(candidates))]
+
+            corpus_chunks = self.metadata_store.fetch_chunks(paper_ids=paper_ids)
+            candidates = self.context_enricher.enrich(candidates, corpus_chunks=corpus_chunks, window=1)
             quality = self.adaptive.retrieval_quality(candidates)
+
+            # Retry retrieval first when context quality is too low.
+            if quality < self.adaptive.min_quality_threshold and retries < self.adaptive.max_retries:
+                retries += 1
+                continue
+
             answer, claims = self.reasoning.generate_answer(question=question, plan=plan, contexts=candidates)
             verification = self.adaptive.verify_answer(answer, [item.chunk.text for item in candidates])
 
@@ -148,9 +182,12 @@ class HybridRAGSystem:
                 "supported": verification.supported if verification else False,
                 "confidence": verification.confidence if verification else 0.0,
                 "unsupported_claims": verification.unsupported_claims if verification else [],
+                "issues": verification.issues if verification else [],
+                "stage_scores": verification.stage_scores if verification else {},
             },
             "llm_error": self.reasoning.last_llm_error,
             "k_final": len(final_candidates),
+            "citation_augmented_count": citation_augmented_count,
         }
 
         return QueryResult(
@@ -189,3 +226,24 @@ class HybridRAGSystem:
             reranker_provider=self.reranker.provider_name,
             llm_provider=self._active_llm_provider,
         )
+
+    def arxiv_sync(
+        self,
+        query: str,
+        max_results: int,
+        days_back: int,
+        categories: list[str] | None = None,
+        relevance_terms: list[str] | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, object]:
+        return self.arxiv_pipeline.run(
+            query=query,
+            max_results=max_results,
+            days_back=days_back,
+            categories=categories,
+            relevance_terms=relevance_terms,
+            dry_run=dry_run,
+        )
+
+    def evaluate(self, dataset_path: str, limit: int | None = None) -> dict[str, object]:
+        return self.evaluation_harness.run(dataset_path=dataset_path, limit=limit)

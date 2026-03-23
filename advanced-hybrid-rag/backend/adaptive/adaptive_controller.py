@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from pydantic import BaseModel
 
 from ..retrieval.hybrid_engine import RetrievalResult
@@ -24,8 +26,9 @@ class RetrievalParameters(BaseModel):
 class AdaptiveRetrievalController:
 	"""Tune retrieval parameters based on quality diagnostics."""
 
-	def __init__(self, reformulator: QueryReformulator | None = None) -> None:
+	def __init__(self, reformulator: QueryReformulator | None = None, settings: object | None = None) -> None:
 		self.reformulator = reformulator or QueryReformulator()
+		self.settings = settings or SimpleNamespace(quality_threshold=0.65, max_corrective_retries=3)
 
 	async def optimize_retrieval(
 		self,
@@ -57,6 +60,15 @@ class AdaptiveRetrievalController:
 			params.k_bm25 = max(10, int(params.k_bm25 * 0.8))
 
 		return params
+
+	def should_retry(self, quality_score: float | str, attempt: int) -> bool:
+		if isinstance(quality_score, str):
+			quality_score = {"High": 0.85, "Medium": 0.60, "Low": 0.30}.get(quality_score, 0.30)
+
+		threshold = float(getattr(self.settings, "quality_threshold", 0.65) or 0.65)
+		max_retries = int(getattr(self.settings, "max_corrective_retries", 3) or 3)
+
+		return float(quality_score) < threshold and attempt < max_retries
 
 
 __all__ = ["RetrievalParameters", "AdaptiveRetrievalController"]

@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from .api.middleware import AuthMiddleware, RequestLoggingMiddleware
 from .api.routes.analysis import router as analysis_router
 from .api.routes.annotations import router as annotations_router
+from .api.routes.debug import router as debug_router
 from .api.routes.eval import router as eval_router
 from .api.routes.feedback import router as feedback_router
 from .api.routes.graph import router as graph_router
@@ -98,7 +99,7 @@ def _configure_app_state(app: FastAPI) -> None:
     analyzer = QueryAnalyzer()
     answer_generator = AnswerGenerator()
     verifier = SelfVerifier()
-    adaptive_controller = AdaptiveRetrievalController()
+    adaptive_controller = AdaptiveRetrievalController(settings=settings.adaptive)
     quality_scorer = RetrievalQualityScorer()
 
     async def _refine_retrieval(query: str, bad_chunks):
@@ -125,9 +126,67 @@ def _configure_app_state(app: FastAPI) -> None:
         )
         return regenerated.model_dump()
 
+    async def _optimize_retrieval(query: str, bad_chunks):
+        _ = bad_chunks
+        query_embedding = embedder.embed_query(query)
+        baseline = await retrieval_engine.retrieve(
+            query=query,
+            query_embedding=query_embedding,
+            k_final=max(settings.retrieval.k_final, 8),
+            filters=RetrievalFilters(),
+            use_hyde=False,
+            use_graph=True,
+            use_colbert=False,
+        )
+        quality = quality_scorer.score(query, query_embedding, baseline.chunks)
+        return await adaptive_controller.optimize_retrieval(query=query, initial_results=baseline, quality=quality, attempt=1)
+
+    async def _rerun_pipeline(query: str, params):
+        query_embedding = embedder.embed_query(params.query)
+
+        prev_k_vector = retrieval_engine.k_vector
+        prev_k_bm25 = retrieval_engine.k_bm25
+        prev_k_graph = retrieval_engine.k_graph
+        prev_k_rerank = retrieval_engine.k_rerank_candidates
+        prev_threshold = retrieval_engine.reranker.rerank_threshold
+        try:
+            retrieval_engine.k_vector = int(params.k_vector)
+            retrieval_engine.k_bm25 = int(params.k_bm25)
+            retrieval_engine.k_graph = int(params.k_graph)
+            retrieval_engine.k_rerank_candidates = max(int(params.k_vector + params.k_bm25), prev_k_rerank)
+            retrieval_engine.reranker.rerank_threshold = float(params.rerank_threshold)
+
+            retrieval = await retrieval_engine.retrieve(
+                query=params.query,
+                query_embedding=query_embedding,
+                k_final=max(settings.retrieval.k_final, 8),
+                filters=RetrievalFilters(),
+                use_hyde=bool(params.use_hyde),
+                use_graph=bool(params.use_graph),
+                use_colbert=bool(params.use_colbert),
+            )
+            analysis = analyzer.analyze(query)
+            regenerated = await answer_generator.generate(
+                query=query,
+                analysis=analysis,
+                chunks=retrieval.chunks,
+                reasoning_trace=["corrective", "rerun"],
+            )
+            out = regenerated.model_dump()
+            out["retrieval_quality"] = sum(retrieval.retrieval_scores.values()) / max(1, len(retrieval.retrieval_scores))
+            return out
+        finally:
+            retrieval_engine.k_vector = prev_k_vector
+            retrieval_engine.k_bm25 = prev_k_bm25
+            retrieval_engine.k_graph = prev_k_graph
+            retrieval_engine.k_rerank_candidates = prev_k_rerank
+            retrieval_engine.reranker.rerank_threshold = prev_threshold
+
     corrective_rag = CorrectiveRAG(
         regenerate_answer=_regenerate_answer,
         refine_retrieval=_refine_retrieval,
+        optimize_retrieval=_optimize_retrieval,
+        rerun_pipeline=_rerun_pipeline,
     )
 
     app.state.embedder = embedder
@@ -186,6 +245,7 @@ def create_app() -> FastAPI:
     app.include_router(eval_router)
     app.include_router(feedback_router)
     app.include_router(annotations_router)
+    app.include_router(debug_router)
     app.include_router(analysis_router)
     app.include_router(literature_router)
     app.include_router(planning_router)

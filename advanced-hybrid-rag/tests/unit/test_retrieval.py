@@ -178,3 +178,44 @@ def test_colbert_retriever_prefers_better_token_overlap():
 	results = ret.search("retrieval generation", k=2)
 	assert len(results) == 2
 	assert results[0].chunk.metadata.chunk_id == chunk_good.metadata.chunk_id
+
+
+def test_references_excluded_by_default_unless_requested():
+	class _StaticVectorRetriever:
+		async def retrieve(self, query_embedding: np.ndarray, k: int, filters: dict | None = None) -> list[SearchResult]:
+			_ = query_embedding
+			_ = k
+			_ = filters
+			ref = _result("vector")
+			ref.chunk.metadata.section = "references"
+			meth = _result("vector")
+			meth.chunk.metadata.chunk_id = "chunk-method"
+			meth.chunk.metadata.section = "method"
+			return [ref, meth]
+
+	engine = HybridRetrievalEngine(
+		embedder=_DummyEmbedder(),
+		vector_retriever=_StaticVectorRetriever(),
+		bm25_retriever=_DummyBM25Retriever(),
+		reranker=_PassthroughReranker(),
+	)
+
+	default_result = asyncio.run(
+		engine.retrieve(
+			query="test",
+			query_embedding=np.ones(384, dtype=np.float32),
+			k_final=5,
+			filters=RetrievalFilters(),
+		)
+	)
+	assert all((c.metadata.section or "").lower() != "references" for c in default_result.chunks)
+
+	references_result = asyncio.run(
+		engine.retrieve(
+			query="test",
+			query_embedding=np.ones(384, dtype=np.float32),
+			k_final=5,
+			filters=RetrievalFilters(sections=["references"]),
+		)
+	)
+	assert any((c.metadata.section or "").lower() == "references" for c in references_result.chunks)

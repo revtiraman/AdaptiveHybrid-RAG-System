@@ -22,6 +22,11 @@ def _as_bool(name: str, default: bool) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _as_csv(name: str, default: str = "") -> list[str]:
+    raw = _env(name, default)
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
 def _resolve_path(raw: str, root_dir: Path) -> Path:
     path = Path(raw).expanduser()
     if path.is_absolute():
@@ -58,6 +63,15 @@ class HybridRAGSettings:
     max_retries: int
     request_timeout_seconds: float
     enable_pdfplumber: bool
+    enable_docling: bool
+    enable_marker: bool
+    use_citation_chain: bool
+    citation_chain_max_papers: int
+    arxiv_default_query: str
+    arxiv_max_results: int
+    arxiv_days_back: int
+    arxiv_categories: list[str]
+    arxiv_relevance_terms: list[str]
 
     @classmethod
     def from_env(cls) -> "HybridRAGSettings":
@@ -91,6 +105,15 @@ class HybridRAGSettings:
             max_retries=_as_int("RAG_MAX_RETRIES", 3),
             request_timeout_seconds=_as_float("REQUEST_TIMEOUT_SECONDS", 45.0),
             enable_pdfplumber=_as_bool("RAG_ENABLE_PDFPLUMBER", True),
+            enable_docling=_as_bool("RAG_ENABLE_DOCLING", True),
+            enable_marker=_as_bool("RAG_ENABLE_MARKER", True),
+            use_citation_chain=_as_bool("RAG_USE_CITATION_CHAIN", True),
+            citation_chain_max_papers=_as_int("RAG_CITATION_CHAIN_MAX_PAPERS", 3),
+            arxiv_default_query=_env("ARXIV_DEFAULT_QUERY", "retrieval augmented generation"),
+            arxiv_max_results=_as_int("ARXIV_MAX_RESULTS", 10),
+            arxiv_days_back=_as_int("ARXIV_DAYS_BACK", 30),
+            arxiv_categories=_as_csv("ARXIV_CATEGORIES", ""),
+            arxiv_relevance_terms=_as_csv("ARXIV_RELEVANCE_TERMS", "retrieval,generation,rag,language model,agentic"),
         )
 
     def ensure_directories(self) -> None:

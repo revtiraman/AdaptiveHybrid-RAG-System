@@ -57,6 +57,8 @@ class ReasoningEngine:
             context_blocks.append(
                 {
                     "context_id": idx,
+                    "context_type": candidate.context_type,
+                    "claim": candidate.claim_text,
                     "chunk_id": candidate.chunk.chunk_id,
                     "paper_id": candidate.chunk.paper_id,
                     "page_number": candidate.chunk.page_number,
@@ -122,6 +124,13 @@ class ReasoningEngine:
         if not contexts:
             return "I do not have enough evidence in the indexed papers to answer this question.", []
 
+        if self._question_context_alignment(question, contexts) < 0.12:
+            return (
+                "The retrieved context does not directly answer this question. "
+                "Try rephrasing the query or restricting to a more relevant paper.",
+                [],
+            )
+
         if self._is_overview_question(question):
             return self._overview_fallback(question, contexts)
 
@@ -148,16 +157,18 @@ class ReasoningEngine:
             answer_parts = ["I found context, but could not extract clean evidence sentences."]
 
         answer = self._clean_claim_text(" ".join(answer_parts))
+        if self._is_noise_answer(answer):
+            return (
+                "The retrieved context is too noisy to produce a reliable answer. "
+                "Try re-ingesting the document or narrowing the question.",
+                [],
+            )
         return answer, claims
 
     def _overview_fallback(self, question: str, contexts: list[RetrievalCandidate]) -> tuple[str, list[AnswerClaim]]:
         selected = self._prioritize_overview_contexts(contexts)[:8]
         text_blob = " ".join(item.chunk.text for item in selected)
         cleaned_blob = self._clean_claim_text(text_blob)
-        paper_id_blob = " ".join(item.chunk.paper_id for item in selected)
-
-        if self._looks_like_transformer_paper(cleaned_blob, paper_id_blob):
-            return self._transformer_paper_overview(selected)
 
         is_resume = self._looks_like_resume(cleaned_blob)
         tech_stack = self._extract_tech_terms(cleaned_blob)
@@ -211,74 +222,6 @@ class ReasoningEngine:
                     ],
                 )
             )
-        return answer, claims
-
-    @staticmethod
-    def _looks_like_transformer_paper(text: str, paper_ids: str = "") -> bool:
-        lower = text.lower()
-        paper_lower = (paper_ids or "").lower()
-        if "attention-is-all-you-need" in paper_lower or "transformer" in paper_lower:
-            return True
-
-        signals = [
-            "attention is all you need",
-            "transformer",
-            "self-attention",
-            "wmt 2014",
-            "encoder",
-            "decoder",
-        ]
-        score = sum(1 for token in signals if token in lower)
-        return score >= 2
-
-    @staticmethod
-    def _transformer_paper_overview(selected: list[RetrievalCandidate]) -> tuple[str, list[AnswerClaim]]:
-        answer = (
-            "This paper introduces the Transformer, a sequence transduction architecture based entirely on self-attention "
-            "instead of recurrent or convolutional layers. It proposes multi-head attention with positional encoding, "
-            "enabling better parallelization during training. The paper reports strong machine translation results, "
-            "including state-of-the-art performance on WMT 2014 English-German and English-French benchmarks at the time."
-        )
-
-        def _citation_for(section_pref: str) -> list[dict[str, object]]:
-            for item in selected:
-                if item.chunk.section == section_pref:
-                    return [
-                        {
-                            "paper_id": item.chunk.paper_id,
-                            "chunk_id": item.chunk.chunk_id,
-                            "page_number": item.chunk.page_number,
-                            "section": item.chunk.section,
-                        }
-                    ]
-            if selected:
-                item = selected[0]
-                return [
-                    {
-                        "paper_id": item.chunk.paper_id,
-                        "chunk_id": item.chunk.chunk_id,
-                        "page_number": item.chunk.page_number,
-                        "section": item.chunk.section,
-                    }
-                ]
-            return []
-
-        claims = [
-            AnswerClaim(
-                claim=(
-                    "The paper proposes the Transformer architecture and removes recurrence in favor of self-attention for sequence transduction tasks."
-                ),
-                citations=_citation_for("introduction"),
-            ),
-            AnswerClaim(
-                claim="It uses multi-head attention and positional encodings to model token relationships while preserving order information.",
-                citations=_citation_for("method"),
-            ),
-            AnswerClaim(
-                claim="It reports strong machine translation performance on WMT 2014 En-De and En-Fr benchmarks.",
-                citations=_citation_for("experiments"),
-            ),
-        ]
         return answer, claims
 
     @staticmethod
@@ -428,12 +371,6 @@ class ReasoningEngine:
                 continue
             if len(re.findall(r"[A-Za-z]", cleaned)) < 25:
                 continue
-            if "=" in cleaned or "{" in cleaned or "}" in cleaned:
-                continue
-            if len(re.findall(r"\d", cleaned)) > 10:
-                continue
-            if any(noise in cleaned.lower() for noise in ["ffn(", "w +b", "table3", "rows("]):
-                continue
 
             lower = sentence.lower()
             score = sum(1 for key in keywords if key in lower)
@@ -462,3 +399,32 @@ class ReasoningEngine:
                     }
                 )
         return citations
+
+    @staticmethod
+    def _question_context_alignment(question: str, contexts: list[RetrievalCandidate]) -> float:
+        q_terms = set(re.findall(r"[a-zA-Z0-9]+", question.lower()))
+        q_terms = {t for t in q_terms if len(t) > 2}
+        if not q_terms or not contexts:
+            return 0.0
+
+        best = 0.0
+        for candidate in contexts[:8]:
+            c_terms = set(re.findall(r"[a-zA-Z0-9]+", candidate.chunk.text.lower()))
+            if not c_terms:
+                continue
+            overlap = len(q_terms & c_terms) / max(1, len(q_terms))
+            best = max(best, overlap)
+        return best
+
+    @staticmethod
+    def _is_noise_answer(answer: str) -> bool:
+        lower = (answer or "").lower()
+        noise_patterns = [
+            r"example query",
+            r"mode:\s*multi-hop",
+            r"confidence:\s*(high|medium|low)",
+            r"grounding:\s*verified",
+            r"sub-questions generated",
+            r"\b\d+\s*seconds\b",
+        ]
+        return any(re.search(pattern, lower) for pattern in noise_patterns)
