@@ -71,11 +71,18 @@ class ReasoningEngine:
             try:
                 payload = self.llm_client.complete_json(
                     instructions=(
-                        "Answer only from provided context. Be concise and coherent. "
-                        "Do not copy noisy fragments or leading symbols (such as +, -, bullets). "
-                        "If user asks what a document is about, produce a high-level overview in 2-4 complete sentences. "
-                        "Return strict JSON with keys: answer (string) and claims "
-                        "(array of {claim: string, context_ids: number[]})."
+                        "You are an expert research assistant specializing in scientific paper question answering. "
+                        "Answer ONLY using evidence from the provided context chunks. "
+                        "Rules: "
+                        "1. Be precise and factual — cite specific numbers, methods, and findings when present. "
+                        "2. Do NOT copy noisy fragments, leading symbols (+, -, bullets, [SECTION:], >>>), or reference markers. "
+                        "3. For overview/summary questions: produce a coherent 2-4 sentence high-level description. "
+                        "4. For methodology questions: describe the approach, key components, and how they interact. "
+                        "5. For results/metrics questions: cite specific numbers and comparisons from context. "
+                        "6. For multi-hop questions: synthesize across all provided hops in a unified answer. "
+                        "7. If context is insufficient, say so clearly rather than hallucinating. "
+                        "Return strict JSON: {\"answer\": \"...\", \"claims\": [{\"claim\": \"...\", \"context_ids\": [1,2]}]}. "
+                        "Each claim must map to 1-3 context_ids that directly support it."
                     ),
                     prompt=json.dumps(
                         {
@@ -102,8 +109,9 @@ class ReasoningEngine:
                 answer = self._clean_claim_text(answer)
                 if answer:
                     if not claims:
+                        fallback_ids = list(range(1, min(4, len(context_blocks) + 1)))
                         for fallback in self._claims_from_answer(answer):
-                            citations = self._citations_for_ids(context_blocks, [1, 2, 3])
+                            citations = self._citations_for_ids(context_blocks, fallback_ids)
                             claims.append(AnswerClaim(claim=fallback, citations=citations))
                     return answer, claims
             except Exception as exc:
@@ -112,11 +120,9 @@ class ReasoningEngine:
 
         fallback_answer, fallback_claims = self._extractive_fallback(question, contexts)
         if self.last_llm_error:
+            # Provide a clean message; the raw error is available in diagnostic.llm_error for devs.
             fallback_answer = (
-                "LLM generation is temporarily unavailable (provider error or quota limit). "
-                "Showing evidence snippets from retrieved context. "
-                f"Details: {self.last_llm_error.splitlines()[0]}\n\n"
-                f"{fallback_answer}"
+                f"[LLM unavailable — showing extracted evidence]\n\n{fallback_answer}"
             )
         return fallback_answer, fallback_claims
 
@@ -139,7 +145,10 @@ class ReasoningEngine:
         answer_parts: list[str] = []
 
         for candidate in selected:
-            sentence = self._best_sentence(candidate.chunk.text)
+            # Use the original un-enriched chunk text when available so `>>>` / [SECTION:] markers
+            # from ContextEnricher do not leak into the fallback answer.
+            raw_text = str(candidate.chunk.metadata.get("main_chunk_text") or candidate.chunk.text)
+            sentence = self._best_sentence(raw_text)
             if not sentence:
                 continue
             citations = [
@@ -157,6 +166,10 @@ class ReasoningEngine:
             answer_parts = ["I found context, but could not extract clean evidence sentences."]
 
         answer = self._clean_claim_text(" ".join(answer_parts))
+        focus_terms = self._focus_terms_for_question(question)
+        if focus_terms:
+            # Keep prefix compact so fallback still centers retrieved evidence.
+            answer = f"Focus: {', '.join(focus_terms)}. {answer}"
         if self._is_noise_answer(answer):
             return (
                 "The retrieved context is too noisy to produce a reliable answer. "
@@ -167,7 +180,11 @@ class ReasoningEngine:
 
     def _overview_fallback(self, question: str, contexts: list[RetrievalCandidate]) -> tuple[str, list[AnswerClaim]]:
         selected = self._prioritize_overview_contexts(contexts)[:8]
-        text_blob = " ".join(item.chunk.text for item in selected)
+        # Prefer original chunk text over enriched text to avoid `>>>` / [SECTION:] markers.
+        text_blob = " ".join(
+            str(item.chunk.metadata.get("main_chunk_text") or item.chunk.text)
+            for item in selected
+        )
         cleaned_blob = self._clean_claim_text(text_blob)
 
         is_resume = self._looks_like_resume(cleaned_blob)
@@ -206,7 +223,8 @@ class ReasoningEngine:
 
         claims: list[AnswerClaim] = []
         for item in selected[:3]:
-            claim_text = self._best_sentence(item.chunk.text)
+            raw = str(item.chunk.metadata.get("main_chunk_text") or item.chunk.text)
+            claim_text = self._best_sentence(raw)
             if not claim_text:
                 continue
             claims.append(
@@ -247,16 +265,16 @@ class ReasoningEngine:
             return True
 
         # Common front-matter and bibliography patterns that degrade fallback summaries.
+        # Require higher marker count to avoid filtering legitimate paper text.
         noise_markers = [
             "@",
-            "conference",
             "proceedings",
             "copyright",
             "equal contribution",
             "listing order",
-            "google brain",
-            "nips",
-            "neurips",
+            "all rights reserved",
+            "doi:",
+            "arxiv preprint",
         ]
         marker_hits = sum(1 for marker in noise_markers if marker in lower)
         if marker_hits >= 2:
@@ -297,6 +315,9 @@ class ReasoningEngine:
     @staticmethod
     def _clean_claim_text(text: str) -> str:
         cleaned = re.sub(r"\s+", " ", text or "").strip()
+        # Strip ContextEnricher markers that leak into fallback answers.
+        cleaned = re.sub(r"\[SECTION:[^\]]*\]", "", cleaned)
+        cleaned = re.sub(r">>>+\s*", "", cleaned)
         cleaned = re.sub(r"^[^A-Za-z0-9]+", "", cleaned)
         cleaned = cleaned.replace("●", "").replace("•", "")
         cleaned = re.sub(r"\s+", " ", cleaned).strip(" -\t")
@@ -311,7 +332,13 @@ class ReasoningEngine:
     @staticmethod
     def _is_overview_question(question: str) -> bool:
         q = question.lower()
-        patterns = ["what is this", "what this", "all about", "summary", "summarize", "overview"]
+        patterns = [
+            "what is this", "what this", "all about", "summary", "summarize", "overview",
+            "describe", "explain what", "tell me about", "what does this paper",
+            "main contribution", "key findings", "what problem", "what is the paper",
+            "what is the document", "what is this paper", "what is this document",
+            "main idea", "key idea", "primary contribution", "what does this study",
+        ]
         return any(pattern in q for pattern in patterns)
 
     @staticmethod
@@ -360,7 +387,12 @@ class ReasoningEngine:
     def _best_overview_sentences(text: str) -> list[str]:
         sentences = [segment.strip() for segment in re.split(r"(?<=[.!?])\s+", text) if segment.strip()]
         scored: list[tuple[int, str]] = []
-        keywords = {"propose", "develop", "build", "evaluate", "result", "improve", "system"}
+        keywords = {
+            "propose", "develop", "build", "evaluate", "result", "improve", "system",
+            "introduce", "present", "achieve", "show", "demonstrate", "outperform",
+            "state-of-the-art", "novel", "approach", "framework", "method", "model",
+            "train", "fine-tune", "benchmark", "dataset", "experiment", "performance",
+        }
         for sentence in sentences:
             cleaned = ReasoningEngine._clean_claim_text(sentence)
             if not cleaned or len(cleaned) < 40:
@@ -415,6 +447,41 @@ class ReasoningEngine:
             overlap = len(q_terms & c_terms) / max(1, len(q_terms))
             best = max(best, overlap)
         return best
+
+    @staticmethod
+    def _focus_terms_for_question(question: str) -> list[str]:
+        lower = question.lower()
+        terms: list[str] = []
+
+        def add(values: list[str]) -> None:
+            for value in values:
+                if value not in terms:
+                    terms.append(value)
+
+        if any(token in lower for token in ["problem", "objective", "goal"]):
+            add(["problem", "objective", "approach"])
+        if any(token in lower for token in ["method", "architecture", "model"]):
+            add(["method", "model", "architecture"])
+        if any(token in lower for token in ["dataset", "benchmark", "evaluation"]):
+            add(["dataset", "benchmark", "evaluation"])
+        if any(token in lower for token in ["metric", "accuracy", "score", "quantitative"]):
+            add(["metric", "accuracy", "score"])
+        if any(token in lower for token in ["baseline", "compare", "versus", "vs", "improve"]):
+            add(["baseline", "compare", "improve"])
+        if any(token in lower for token in ["assumption", "constraint", "setting"]):
+            add(["assumption", "constraint", "setting"])
+        if any(token in lower for token in ["limitation", "future work", "weakness"]):
+            add(["limitation", "future work", "weakness"])
+        if any(token in lower for token in ["ablation", "component", "effect"]):
+            add(["ablation", "component", "effect"])
+        if any(token in lower for token in ["table", "numbers", "comparison"]):
+            add(["table", "comparison", "numbers"])
+        if any(token in lower for token in ["evidence", "justify", "justification", "experiment"]):
+            add(["evidence", "justification", "experiment"])
+        if any(token in lower for token in ["summary", "takeaway", "conclusion", "impact"]):
+            add(["summary", "conclusion", "impact"])
+
+        return terms[:4]
 
     @staticmethod
     def _is_noise_answer(answer: str) -> bool:

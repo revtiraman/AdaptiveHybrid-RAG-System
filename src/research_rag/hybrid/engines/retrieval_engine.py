@@ -26,6 +26,8 @@ class HybridRetrievalEngine:
         per_section_cap: int = 3,
     ) -> list[RetrievalCandidate]:
         filters = filters or {}
+        query_terms = self._expanded_query_terms(query)
+        section_weights = self._section_intent_weights(query)
         query_embedding = self.embedder.embed([query])[0]
 
         vector_items = self.vector_store.query(query_embedding, top_k=top_k * 3, paper_ids=paper_ids)
@@ -74,6 +76,7 @@ class HybridRetrievalEngine:
                 rrf += 1.3 / (self.rrf_k + c_rank)
             if table_focused_query and chunk.metadata.get("content_type") == "table":
                 rrf *= 1.2
+            rrf += section_weights.get(chunk.section.lower(), 0.0)
 
             merged[chunk_id] = RetrievalCandidate(
                 chunk=chunk,
@@ -97,6 +100,21 @@ class HybridRetrievalEngine:
         for candidate, score in zip(candidates, rerank_scores, strict=False):
             candidate.rerank_score = score
 
+        # Blend reranker ordering with fusion rank and lexical overlap to stabilize retrieval quality.
+        by_rerank = sorted(candidates, key=lambda item: item.rerank_score, reverse=True)
+        rerank_rank = {item.chunk.chunk_id: idx for idx, item in enumerate(by_rerank, start=1)}
+
+        by_rrf = sorted(candidates, key=lambda item: item.rrf_score, reverse=True)
+        rrf_rank = {item.chunk.chunk_id: idx for idx, item in enumerate(by_rrf, start=1)}
+
+        for candidate in candidates:
+            chunk_id = candidate.chunk.chunk_id
+            rank_score = (1.2 / (self.rrf_k + rerank_rank[chunk_id])) + (1.0 / (self.rrf_k + rrf_rank[chunk_id]))
+            overlap_bonus = 0.10 * self._lexical_overlap(query_terms, candidate.chunk.text)
+            section_bonus = section_weights.get(candidate.chunk.section.lower(), 0.0)
+            claim_bonus = 0.025 if candidate.claim_text else 0.0
+            candidate.rerank_score = rank_score + overlap_bonus + section_bonus + claim_bonus
+
         candidates.sort(key=lambda item: item.rerank_score, reverse=True)
         diversified = self._enforce_diversity(candidates, top_k=top_k, per_section_cap=per_section_cap)
         return diversified
@@ -113,7 +131,82 @@ class HybridRetrievalEngine:
         section_filter = str(filters.get("section", "")).strip().lower()
         if not section_filter:
             return chunks
-        return [chunk for chunk in chunks if chunk.section.lower() == section_filter]
+        return [
+            chunk
+            for chunk in chunks
+            if section_filter in chunk.section.lower() or chunk.section.lower() in section_filter
+        ]
+
+    @staticmethod
+    def _expanded_query_terms(query: str) -> set[str]:
+        base = set(re.findall(r"[a-zA-Z0-9]+", query.lower()))
+        expansions = {
+            "dataset": {"benchmark", "corpus", "data", "training", "testset"},
+            "benchmark": {"dataset", "evaluation", "results", "leaderboard"},
+            "evaluation": {"metric", "results", "experiment", "benchmark", "assessment"},
+            "metric": {"accuracy", "f1", "score", "performance", "precision", "recall", "bleu", "rouge"},
+            "compare": {"comparison", "versus", "baseline", "outperform", "surpass"},
+            "baseline": {"compare", "improvement", "prior", "existing"},
+            "limitation": {"weakness", "future", "constraint", "drawback", "shortcoming"},
+            "ablation": {"component", "effect", "module", "variant", "contribution"},
+            "table": {"numbers", "score", "comparison", "statistics"},
+            "method": {"approach", "architecture", "model", "framework", "technique", "algorithm"},
+            "conclusion": {"takeaway", "summary", "impact", "finding", "contribution"},
+            "model": {"architecture", "network", "transformer", "encoder", "decoder"},
+            "training": {"finetune", "pretrain", "optimize", "learn"},
+            "performance": {"accuracy", "score", "result", "metric", "quality"},
+            "contribution": {"novelty", "innovation", "proposed", "introduce"},
+            "retrieval": {"search", "retrieve", "fetch", "lookup", "query"},
+            "generation": {"synthesize", "produce", "output", "generate"},
+            "attention": {"transformer", "self-attention", "cross-attention"},
+            "embedding": {"vector", "representation", "encode", "feature"},
+            "loss": {"objective", "training", "optimize", "criterion"},
+        }
+        for token in list(base):
+            base.update(expansions.get(token, set()))
+        return base
+
+    @staticmethod
+    def _section_intent_weights(query: str) -> dict[str, float]:
+        lower = query.lower()
+        weights: dict[str, float] = {}
+
+        def apply(section_names: list[str], weight: float) -> None:
+            for name in section_names:
+                weights[name] = max(weights.get(name, 0.0), weight)
+
+        if any(term in lower for term in ["dataset", "benchmark", "evaluation", "corpus", "testset"]):
+            apply(["experiments", "results", "method", "evaluation"], 0.016)
+        if any(term in lower for term in ["metric", "accuracy", "score", "quantitative", "f1", "bleu", "rouge", "precision", "recall"]):
+            apply(["results", "experiments", "table", "analysis"], 0.018)
+        if any(term in lower for term in ["limitation", "weakness", "future work", "constraint", "drawback"]):
+            apply(["discussion", "conclusion", "limitations"], 0.018)
+        if any(term in lower for term in ["method", "architecture", "model", "approach", "framework", "algorithm", "technique"]):
+            apply(["method", "methods", "approach", "model"], 0.016)
+        if any(term in lower for term in ["overview", "summary", "takeaway", "main problem", "describe", "what is", "about"]):
+            apply(["abstract", "introduction", "conclusion"], 0.014)
+        if any(term in lower for term in ["table", "compare", "comparison", "vs", "versus", "outperform", "baseline"]):
+            apply(["results", "table", "experiments"], 0.017)
+        if any(term in lower for term in ["contribute", "contribution", "novelty", "propose", "novel", "introduce"]):
+            apply(["abstract", "introduction", "conclusion"], 0.015)
+        if any(term in lower for term in ["ablation", "component", "effect", "variant"]):
+            apply(["experiments", "results", "analysis", "ablation study"], 0.016)
+        if any(term in lower for term in ["related work", "prior work", "previous", "existing"]):
+            apply(["related_work", "introduction"], 0.015)
+        if any(term in lower for term in ["training", "finetune", "pretrain", "optimize"]):
+            apply(["method", "experiments", "implementation details"], 0.014)
+
+        return weights
+
+    @staticmethod
+    def _lexical_overlap(query_terms: set[str], text: str) -> float:
+        if not query_terms:
+            return 0.0
+        tokens = set(re.findall(r"[a-zA-Z0-9]+", text.lower()))
+        if not tokens:
+            return 0.0
+        overlap = len(query_terms & tokens)
+        return min(1.0, overlap / max(4, len(query_terms)))
 
     @staticmethod
     def _tokenize(text: str) -> list[str]:

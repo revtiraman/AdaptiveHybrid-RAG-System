@@ -55,6 +55,12 @@ class HybridRAGSettings:
     gemini_base_url: str
     gemini_model: str
     llm_model: str
+    openrouter_api_keys: list[str]
+    openrouter_base_url: str
+    openrouter_model: str
+    mistral_api_key: str
+    mistral_base_url: str
+    mistral_model: str
     chunk_chars: int
     chunk_overlap: int
     base_k: int
@@ -90,16 +96,22 @@ class HybridRAGSettings:
             chroma_collection=_env("RAG_CHROMA_COLLECTION", "paper_chunks"),
             embedding_model=_env("RAG_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5"),
             reranker_model=_env("RAG_RERANKER_MODEL", "BAAI/bge-reranker-base"),
-            llm_provider=_env("LLM_PROVIDER", "openai"),
+            llm_provider=_env("LLM_PROVIDER", "openrouter"),
             openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
             openai_base_url=_env("OPENAI_BASE_URL", "https://api.openai.com/v1"),
             gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
             gemini_base_url=_env("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"),
-            gemini_model=_env("GEMINI_MODEL", "gemini-2.0-flash"),
-            llm_model=_env("OPENAI_RESPONSES_MODEL", "gpt-5-mini"),
-            chunk_chars=_as_int("RAG_CHUNK_CHARS", 200),
-            chunk_overlap=_as_int("RAG_CHUNK_OVERLAP", 40),
-            base_k=_as_int("RAG_BASE_K", 10),
+            gemini_model=_env("GEMINI_MODEL", "gemini-2.5-flash"),
+            llm_model=_env("OPENAI_RESPONSES_MODEL", "gpt-4o-mini"),
+            openrouter_api_keys=_as_csv("OPENROUTER_API_KEYS", ""),
+            openrouter_base_url=_env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+            openrouter_model=_env("OPENROUTER_MODEL", "google/gemini-2.0-flash-001"),
+            mistral_api_key=os.getenv("MISTRAL_API_KEY", "").strip(),
+            mistral_base_url=_env("MISTRAL_BASE_URL", "https://api.mistral.ai/v1"),
+            mistral_model=_env("MISTRAL_MODEL", "mistral-small-latest"),
+            chunk_chars=_as_int("RAG_CHUNK_CHARS", 600),
+            chunk_overlap=_as_int("RAG_CHUNK_OVERLAP", 80),
+            base_k=_as_int("RAG_BASE_K", 12),
             max_k=_as_int("RAG_MAX_K", 30),
             rrf_k=_as_int("RAG_RRF_K", 60),
             max_retries=_as_int("RAG_MAX_RETRIES", 3),

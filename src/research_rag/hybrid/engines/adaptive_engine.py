@@ -114,9 +114,19 @@ class AdaptiveCorrectiveEngine:
             stage_scores=stage_scores,
         )
 
-    def should_retry(self, verification: VerificationResult, quality: float, retries: int) -> bool:
+    def should_retry(
+        self,
+        verification: VerificationResult,
+        quality: float,
+        retries: int,
+        llm_available: bool = True,
+    ) -> bool:
         if retries >= self.max_retries:
             return False
+        # Without LLM, retrying only helps if retrieval quality is poor (more chunks may help).
+        # Never retry purely on verification score since extractive fallback won't improve.
+        if not llm_available:
+            return quality < self.min_quality_threshold
         if not verification.supported:
             return True
         if len(verification.issues) >= 3:

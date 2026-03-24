@@ -1,7 +1,13 @@
-PYTHON ?= python3
+PYTHON ?= python3.12
 APP_MODULE ?= research_rag.api.app:create_app
 PDF ?= /Users/revtiramantripathi/Downloads/ilovepdf_merged\ (2)\ (6).pdf
 QUESTION ?= Summarize the key findings of this paper.
+
+# Load .env if present
+ifneq (,$(wildcard .env))
+  include .env
+  export
+endif
 
 .PHONY: install dev test lint format check run ingest query list-papers stats demo web-install web-dev docker-build
 
@@ -24,7 +30,7 @@ check:
 	$(PYTHON) -m compileall src tests
 
 run:
-	uvicorn $(APP_MODULE) --factory --host 0.0.0.0 --port 8000 --reload
+	PYTHONPATH=src $(PYTHON) -m uvicorn $(APP_MODULE) --factory --host 0.0.0.0 --port 8000 --reload
 
 ingest:
 	PYTHONPATH=src $(PYTHON) -m research_rag.cli ingest --pdf "$(PDF)"

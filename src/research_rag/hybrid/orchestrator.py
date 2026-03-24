@@ -45,7 +45,24 @@ class HybridRAGSystem:
         self.reranker = CrossEncoderReranker(settings.reranker_model)
 
         llm_client = None
-        if settings.llm_provider == "openai" and settings.openai_api_key:
+        if settings.llm_provider == "mistral" and settings.mistral_api_key:
+            llm_client = LLMClient(
+                provider="mistral",
+                model=settings.mistral_model,
+                api_key=settings.mistral_api_key,
+                base_url=settings.mistral_base_url,
+                timeout_seconds=settings.request_timeout_seconds,
+            )
+        elif settings.llm_provider == "openrouter" and settings.openrouter_api_keys:
+            llm_client = LLMClient(
+                provider="openrouter",
+                model=settings.openrouter_model,
+                api_key=settings.openrouter_api_keys[0],
+                base_url=settings.openrouter_base_url,
+                timeout_seconds=settings.request_timeout_seconds,
+                extra_api_keys=settings.openrouter_api_keys[1:],
+            )
+        elif settings.llm_provider == "openai" and settings.openai_api_key:
             llm_client = LLMClient(
                 provider="openai",
                 model=settings.llm_model,
@@ -147,11 +164,19 @@ class HybridRAGSystem:
             final_claims = claims
 
             llm_error = self.reasoning.last_llm_error or ""
-            if llm_error and any(token in llm_error.lower() for token in ["quota", "resource_exhausted", "429"]):
-                # Do not waste retries when provider quota is exhausted.
-                break
+            if llm_error:
+                _permanent_error_tokens = [
+                    "quota", "resource_exhausted", "429",
+                    "model_not_found", "model not found", "does not exist",
+                    "invalid model", "no such model", "decommissioned",
+                    "unauthorized", "401", "403", "invalid_api_key",
+                ]
+                if any(token in llm_error.lower() for token in _permanent_error_tokens):
+                    # Do not waste retries on permanent provider errors.
+                    break
 
-            if not self.adaptive.should_retry(verification=verification, quality=quality, retries=retries):
+            llm_available = self._active_llm_provider != "none" and not self.reasoning.last_llm_error
+            if not self.adaptive.should_retry(verification=verification, quality=quality, retries=retries, llm_available=llm_available):
                 break
             retries += 1
 

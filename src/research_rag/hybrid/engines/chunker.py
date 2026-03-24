@@ -8,12 +8,15 @@ from research_rag.hybrid.utils import normalize_ws
 
 _SECTION_PATTERNS = [
     ("abstract", re.compile(r"^\s*abstract\s*$", re.IGNORECASE)),
-    ("introduction", re.compile(r"^\s*(1\.?\s*)?introduction\s*$", re.IGNORECASE)),
-    ("related_work", re.compile(r"^\s*(2\.?\s*)?(related work|background)\s*$", re.IGNORECASE)),
-    ("method", re.compile(r"^\s*(3\.?\s*)?(method|approach|methodology)\s*$", re.IGNORECASE)),
-    ("experiments", re.compile(r"^\s*(4\.?\s*)?(experiments|evaluation)\s*$", re.IGNORECASE)),
-    ("results", re.compile(r"^\s*(5\.?\s*)?(results|discussion)\s*$", re.IGNORECASE)),
-    ("conclusion", re.compile(r"^\s*(6\.?\s*)?conclusion[s]?\s*$", re.IGNORECASE)),
+    ("introduction", re.compile(r"^\s*(\d+\.?\s*)?introduction\s*$", re.IGNORECASE)),
+    ("related_work", re.compile(r"^\s*(\d+\.?\s*)?(related work|related works|prior work|background|literature review)\s*$", re.IGNORECASE)),
+    ("method", re.compile(r"^\s*(\d+\.?\s*)?(method|methods|approach|methodology|proposed method|our approach|model|architecture|system|framework)\s*$", re.IGNORECASE)),
+    ("experiments", re.compile(r"^\s*(\d+\.?\s*)?(experiments|experimental setup|experimental results|evaluation|setup|training|implementation details)\s*$", re.IGNORECASE)),
+    ("results", re.compile(r"^\s*(\d+\.?\s*)?(results|analysis|ablation study|ablation|discussion|findings|performance)\s*$", re.IGNORECASE)),
+    ("conclusion", re.compile(r"^\s*(\d+\.?\s*)?(conclusion|conclusions|concluding remarks|summary|future work|limitations and future work)\s*$", re.IGNORECASE)),
+    ("limitations", re.compile(r"^\s*(\d+\.?\s*)?(limitations?|limitations and future work|broader impact|ethics|ethical considerations)\s*$", re.IGNORECASE)),
+    ("references", re.compile(r"^\s*(references|bibliography|citations)\s*$", re.IGNORECASE)),
+    ("appendix", re.compile(r"^\s*(appendix|supplementary|supplemental material|additional experiments)\s*$", re.IGNORECASE)),
 ]
 
 _NUMBERED_HEADING = re.compile(r"^\s*(\d+(?:\.\d+)*)\s+([A-Za-z][A-Za-z0-9\- ]{2,80})\s*$")
@@ -154,18 +157,22 @@ class SectionAwareChunker:
         numbered = _NUMBERED_HEADING.match(line)
         if numbered:
             title = numbered.group(2).strip().lower()
-            if any(token in title for token in ["intro", "motivation"]):
+            if any(token in title for token in ["intro", "motivation", "overview"]):
                 return "introduction"
-            if any(token in title for token in ["related", "background"]):
+            if any(token in title for token in ["related", "background", "prior work", "literature"]):
                 return "related_work"
-            if any(token in title for token in ["method", "model", "architecture", "approach"]):
+            if any(token in title for token in ["method", "model", "architecture", "approach", "framework", "system", "proposed", "design"]):
                 return "method"
-            if any(token in title for token in ["experiment", "evaluation", "training"]):
+            if any(token in title for token in ["experiment", "evaluation", "training", "setup", "implementation", "benchmark"]):
                 return "experiments"
-            if any(token in title for token in ["result", "analysis", "discussion"]):
+            if any(token in title for token in ["result", "analysis", "ablation", "discussion", "performance", "finding"]):
                 return "results"
-            if any(token in title for token in ["conclusion", "future work"]):
+            if any(token in title for token in ["conclusion", "future work", "concluding", "summary"]):
                 return "conclusion"
+            if any(token in title for token in ["limitation", "broader impact", "ethical", "ethics"]):
+                return "limitations"
+            if any(token in title for token in ["appendix", "supplement"]):
+                return "appendix"
         return None
 
     @staticmethod

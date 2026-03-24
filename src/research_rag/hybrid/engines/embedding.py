@@ -25,7 +25,8 @@ class BGEEmbedder:
             from sentence_transformers import SentenceTransformer
 
             self._model = SentenceTransformer(model_name)
-        except ModuleNotFoundError:
+        except Exception:
+            # Fall back when package, model files, or network access are unavailable.
             self._model = None
 
     @property
@@ -66,7 +67,8 @@ class CrossEncoderReranker:
             from sentence_transformers import CrossEncoder
 
             self._model = CrossEncoder(model_name)
-        except ModuleNotFoundError:
+        except Exception:
+            # Fall back when package, model files, or network access are unavailable.
             self._model = None
 
     @property

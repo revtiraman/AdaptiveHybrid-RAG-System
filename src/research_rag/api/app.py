@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 from uuid import uuid4
 
@@ -46,9 +47,16 @@ class EvalRunRequest(BaseModel):
     limit: int | None = Field(default=None, ge=1, le=1000)
 
 
+class V1QueryRequest(BaseModel):
+    question: str = Field(..., min_length=1)
+    top_k: int = Field(default=5, ge=1, le=50)
+    document_id: str | None = Field(default=None, min_length=1)
+
+
 def create_app() -> FastAPI:
     settings = HybridRAGSettings.from_env()
     container = build_container(settings)
+    api_keys = _parse_api_keys(os.getenv("API_KEYS", ""))
     app = FastAPI(
         title=settings.app_name,
         version="1.0.0",
@@ -59,12 +67,17 @@ def create_app() -> FastAPI:
         allow_origins=[
             "http://127.0.0.1:5173",
             "http://localhost:5173",
+            "http://127.0.0.1:3000",
+            "http://localhost:3000",
+            "http://127.0.0.1:8080",
+            "http://localhost:8080",
         ],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
     app.state.container = container
+    app.state.api_keys = api_keys
 
     @app.middleware("http")
     async def request_id_middleware(request: Request, call_next):
@@ -211,8 +224,147 @@ def create_app() -> FastAPI:
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.get("/v1/documents")
+    async def v1_documents(request: Request) -> dict[str, Any]:
+        container = _container(request)
+        tenant = _require_tenant(request)
+        visible_ids = _visible_paper_ids_for_tenant(container=container, tenant=tenant)
+
+        docs = [
+            {
+                "document_id": paper.paper_id,
+                "title": paper.title,
+                "source_path": paper.source_path,
+                "page_count": paper.page_count,
+                "chunk_count": paper.chunk_count,
+                "updated_at": paper.updated_at,
+            }
+            for paper in container.system.metadata_store.list_papers()
+            if paper.paper_id in visible_ids
+        ]
+        return {"documents": docs}
+
+    @app.post("/v1/query")
+    async def v1_query(request: Request, payload: V1QueryRequest) -> dict[str, Any]:
+        container = _container(request)
+        tenant = _require_tenant(request)
+        visible_ids = _visible_paper_ids_for_tenant(container=container, tenant=tenant)
+
+        if payload.document_id:
+            scoped_id = _resolve_document_id_for_tenant(payload.document_id, tenant=tenant, visible_ids=visible_ids)
+            paper = container.system.metadata_store.get_paper(scoped_id)
+            if paper is None or scoped_id not in visible_ids:
+                raise HTTPException(status_code=404, detail=f"Unknown document_id: {payload.document_id}")
+            paper_ids = [scoped_id]
+        else:
+            paper_ids = visible_ids
+
+        if not paper_ids:
+            return {
+                "answer": "",
+                "retrieved_chunks": [],
+                "question": payload.question,
+                "tenant_id": tenant,
+                "retrieval_quality": 0.0,
+            }
+
+        result = container.system.query(question=payload.question, paper_ids=paper_ids)
+        diag_chunks = list(result.diagnostic.get("retrieved_chunks", []))[: payload.top_k]
+
+        chunks_by_id = {
+            chunk.chunk_id: chunk
+            for chunk in container.system.metadata_store.fetch_chunks(paper_ids=paper_ids)
+        }
+
+        retrieved_chunks = [
+            {
+                "chunk_id": item.get("chunk_id"),
+                "document_id": item.get("paper_id"),
+                "page_number": item.get("page_number"),
+                "section": item.get("section"),
+                "text": chunks_by_id.get(item.get("chunk_id", "")).text if item.get("chunk_id") in chunks_by_id else "",
+            }
+            for item in diag_chunks
+        ]
+
+        return {
+            "answer": result.answer,
+            "retrieved_chunks": retrieved_chunks,
+            "question": payload.question,
+            "tenant_id": tenant,
+            "retrieval_quality": result.retrieval_quality,
+            "retries": result.retries,
+        }
+
     return app
 
 
 def _container(request: Request) -> ServiceContainer:
     return request.app.state.container
+
+
+def _parse_api_keys(raw: str) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for item in raw.split(","):
+        token = item.strip()
+        if not token:
+            continue
+        if ":" in token:
+            tenant, api_key = token.split(":", 1)
+            tenant_id = tenant.strip()
+            key_value = api_key.strip()
+        else:
+            tenant_id = "default"
+            key_value = token
+        if tenant_id and key_value:
+            mapping[key_value] = tenant_id
+    return mapping
+
+
+def _extract_api_key(request: Request) -> str | None:
+    api_key = request.headers.get("x-api-key")
+    if api_key:
+        return api_key.strip()
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        return auth_header[7:].strip()
+    return None
+
+
+def _require_tenant(request: Request) -> str:
+    api_keys: dict[str, str] = getattr(request.app.state, "api_keys", {})
+    if not api_keys:
+        return "default"
+
+    key = _extract_api_key(request)
+    tenant = api_keys.get(key or "")
+    if tenant is None:
+        raise HTTPException(status_code=401, detail="Missing or invalid API key")
+    return tenant
+
+
+def _visible_paper_ids_for_tenant(container: ServiceContainer, tenant: str) -> list[str]:
+    papers = container.system.metadata_store.list_papers()
+    prefix = f"{tenant}::"
+    scoped = [paper.paper_id for paper in papers if paper.paper_id.startswith(prefix)]
+    if scoped:
+        return scoped
+
+    # Backward compatibility: before tenant prefixes were introduced, IDs were unscoped.
+    if tenant == "default":
+        return [paper.paper_id for paper in papers if "::" not in paper.paper_id]
+
+    return []
+
+
+def _resolve_document_id_for_tenant(document_id: str, tenant: str, visible_ids: list[str]) -> str:
+    if "::" in document_id:
+        return document_id
+
+    if tenant == "default":
+        default_scoped = f"default::{document_id}"
+        if default_scoped in visible_ids:
+            return default_scoped
+        return document_id
+
+    return f"{tenant}::{document_id}"
