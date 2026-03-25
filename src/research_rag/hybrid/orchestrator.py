@@ -117,6 +117,10 @@ class HybridRAGSystem:
         started = perf_counter()
         plan = self.reasoning.classify_query(question)
 
+        # HyDE: generate a hypothetical answer passage for better dense retrieval.
+        # Falls back to original question if LLM unavailable.
+        hyde_query = self.reasoning.generate_hyde_query(question)
+
         retries = 0
         final_candidates = []
         final_answer = ""
@@ -133,6 +137,7 @@ class HybridRAGSystem:
                 paper_ids=paper_ids,
                 filters=filters,
                 per_section_cap=3,
+                dense_query=hyde_query,
             )
 
             if self.settings.use_citation_chain and plan.query_type == "multi_hop":

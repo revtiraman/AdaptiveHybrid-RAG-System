@@ -1,253 +1,357 @@
-import React, { useState, useMemo } from 'react';
-import type { Paper } from '../types';
+import React from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  LayoutDashboard, Library, MessageSquare, BarChart3,
+  Settings, ChevronLeft, ChevronRight,
+} from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../lib/api';
+import { useAppStore } from '../lib/store';
 
-interface Props {
-  papers: Paper[];
-  loading: boolean;
-  selected: Set<string>;
-  onToggle: (id: string) => void;
-  onSelectAll: () => void;
-  onClearSelection: () => void;
-  onUpload: () => void;
-  onRefresh: () => void;
-}
+const NAV_ITEMS = [
+  { to: '/',          icon: LayoutDashboard, label: 'Dashboard', section: 'workspace' },
+  { to: '/query',     icon: MessageSquare,   label: 'Query',     section: 'workspace' },
+  { to: '/library',   icon: Library,         label: 'Library',   section: 'workspace' },
+  { to: '/analytics', icon: BarChart3,       label: 'Analytics', section: 'workspace' },
+  { to: '/settings',  icon: Settings,        label: 'Settings',  section: 'system'    },
+];
 
-export default function Sidebar({ papers, loading, selected, onToggle, onSelectAll, onClearSelection, onUpload, onRefresh }: Props) {
-  const [search, setSearch] = useState('');
-
-  const filtered = useMemo(() =>
-    papers.filter(p => p.title.toLowerCase().includes(search.toLowerCase())),
-    [papers, search],
-  );
-
-  const allSelected = papers.length > 0 && papers.every(p => selected.has(p.paper_id));
-
+function LogoMark() {
   return (
-    <div style={{
-      display: 'flex', flexDirection: 'column', height: '100%',
-      background: 'var(--bg-surface)', borderRight: '1px solid var(--border)',
-    }}>
-      {/* Header */}
-      <div style={{ padding: '14px 14px 10px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-            Paper Library
-          </span>
-          <div style={{ display: 'flex', gap: 4 }}>
-            <IconButton onClick={onRefresh} title="Refresh">
-              <RefreshIcon />
-            </IconButton>
-            <button onClick={onUpload} style={{
-              display: 'flex', alignItems: 'center', gap: 5,
-              background: 'var(--accent)', border: 'none', color: '#fff',
-              borderRadius: 6, padding: '4px 10px', cursor: 'pointer',
-              fontSize: 12, fontWeight: 500,
-            }}>
-              <UploadIcon /> Upload
-            </button>
-          </div>
-        </div>
-
-        {/* Search */}
-        <div style={{ position: 'relative' }}>
-          <SearchIcon style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search papers…"
-            style={{
-              width: '100%', background: 'var(--bg-input)', border: '1px solid var(--border)',
-              borderRadius: 6, padding: '6px 8px 6px 28px', color: 'var(--text-primary)',
-              fontSize: 12, outline: 'none',
-            }}
-          />
-        </div>
-
-        {/* Select all / clear */}
-        {papers.length > 0 && (
-          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-            <button onClick={allSelected ? onClearSelection : onSelectAll} style={scopeBtn}>
-              {allSelected ? 'Deselect all' : 'Select all'}
-            </button>
-            {selected.size > 0 && !allSelected && (
-              <button onClick={onClearSelection} style={scopeBtn}>Clear</button>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Paper list */}
-      <div className="scroll-area" style={{ flex: 1, padding: '8px 6px' }}>
-        {loading ? (
-          <LoadingSkeleton />
-        ) : filtered.length === 0 ? (
-          <EmptyLibrary search={search} onUpload={onUpload} />
-        ) : (
-          filtered.map(paper => (
-            <PaperItem
-              key={paper.paper_id}
-              paper={paper}
-              selected={selected.has(paper.paper_id)}
-              onToggle={onToggle}
-            />
-          ))
-        )}
-      </div>
-
-      {/* Footer */}
-      {papers.length > 0 && (
-        <div style={{
-          padding: '8px 14px', borderTop: '1px solid var(--border)',
-          fontSize: 11, color: 'var(--text-muted)', flexShrink: 0,
-        }}>
-          {papers.length} paper{papers.length !== 1 ? 's' : ''} indexed
-          {selected.size > 0 && ` · ${selected.size} selected`}
-        </div>
-      )}
-    </div>
+    <svg width={20} height={22} viewBox="0 0 20 22" fill="none" style={{ flexShrink: 0 }}>
+      <rect x="4" y="3" width="14" height="17" rx="2" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.15)" strokeWidth="1"/>
+      <rect x="1" y="1" width="14" height="17" rx="2" fill="var(--bg-raised)" stroke="var(--border-default)" strokeWidth="1"/>
+      <path d="M10 1 L15 1 L15 6 Z" fill="var(--brand-500)" opacity="0.8"/>
+      <line x1="3" y1="8"  x2="13" y2="8"  stroke="var(--border-default)" strokeWidth="1" strokeLinecap="round"/>
+      <line x1="3" y1="11" x2="10" y2="11" stroke="var(--border-default)" strokeWidth="1" strokeLinecap="round"/>
+      <line x1="3" y1="14" x2="8"  y2="14" stroke="var(--border-default)" strokeWidth="1" strokeLinecap="round"/>
+      <circle cx="16" cy="2" r="3" fill="var(--accent-500)"/>
+      <text x="13.5" y="4" fontSize="4" fill="white" fontWeight="bold">★</text>
+    </svg>
   );
 }
 
-/* ── Paper item ── */
-function PaperItem({ paper, selected, onToggle }: { paper: Paper; selected: boolean; onToggle: (id: string) => void }) {
-  const initial = paper.title.charAt(0).toUpperCase();
-  const color   = hashColor(paper.paper_id);
+export default function Sidebar() {
+  const { sidebarCollapsed, setSidebarCollapsed } = useAppStore();
+  const location = useLocation();
+  const collapsed = sidebarCollapsed;
+  const W = collapsed ? 56 : 248;
+
+  const { data: papers = [] } = useQuery({
+    queryKey: ['papers'],
+    queryFn: api.papers,
+    staleTime: 30_000,
+  });
+
+  const { data: health, isError: healthError } = useQuery({
+    queryKey: ['health'],
+    queryFn: api.health,
+    refetchInterval: 30_000,
+    retry: false,
+  });
+
+  const { data: stats } = useQuery({
+    queryKey: ['stats'],
+    queryFn: api.stats,
+    staleTime: 60_000,
+  });
+
+  const isOnline = !healthError && !!health;
 
   return (
-    <button
-      onClick={() => onToggle(paper.paper_id)}
+    <motion.aside
+      animate={{ width: W }}
+      transition={{ duration: 0.2, ease: [0.25, 1, 0.5, 1] }}
       style={{
-        display: 'flex', alignItems: 'flex-start', gap: 10, width: '100%',
-        background: selected ? 'rgba(99,102,241,.1)' : 'none',
-        border: `1px solid ${selected ? 'rgba(99,102,241,.4)' : 'transparent'}`,
-        borderRadius: 8, padding: '8px 10px', cursor: 'pointer',
-        textAlign: 'left', marginBottom: 2, transition: 'background .12s, border-color .12s',
+        height: '100vh',
+        flexShrink: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        background: 'rgba(13,13,26,0.90)',
+        backdropFilter: 'blur(20px)',
+        WebkitBackdropFilter: 'blur(20px)',
+        borderRight: '1px solid var(--border-faint)',
+        overflow: 'hidden',
+        zIndex: 40,
+        position: 'relative',
       }}
     >
-      {/* Avatar */}
+      {/* Logo */}
       <div style={{
-        width: 30, height: 30, borderRadius: 6, flexShrink: 0,
-        background: color, display: 'flex', alignItems: 'center',
-        justifyContent: 'center', fontSize: 13, fontWeight: 700, color: '#fff',
+        height: 64, display: 'flex', alignItems: 'center',
+        padding: collapsed ? '0 18px' : '0 16px',
+        borderBottom: '1px solid var(--border-faint)',
+        gap: 10, flexShrink: 0,
       }}>
-        {initial}
+        <LogoMark />
+        <AnimatePresence>
+          {!collapsed && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.12 }}
+              style={{ overflow: 'hidden', whiteSpace: 'nowrap' }}
+            >
+              <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.2 }}>
+                ResearchRAG
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>v2.0 alpha</div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{
-          fontSize: 12.5, fontWeight: 500, color: selected ? '#a5b4fc' : 'var(--text-primary)',
-          lineHeight: 1.4, marginBottom: 3,
-          overflow: 'hidden', display: '-webkit-box',
-          WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
-        }}>
-          {paper.title}
+      {/* Nav */}
+      <nav style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '12px 8px' }} className="scroll-area">
+        <SectionLabel label="Workspace" collapsed={collapsed} />
+
+        <div style={{ position: 'relative' }}>
+          {NAV_ITEMS.filter(i => i.section === 'workspace').map((item) => {
+            const isActive = location.pathname === item.to ||
+              (item.to !== '/' && location.pathname.startsWith(item.to));
+            if (!isActive) return null;
+            return (
+              <motion.div
+                key="active-bg"
+                layoutId="active-nav-bg"
+                className="nav-active-bg"
+                style={{
+                  position: 'absolute', left: 0, right: 0,
+                  top: `${NAV_ITEMS.filter(i => i.section === 'workspace').findIndex(i => i.to === item.to) * 38}px`,
+                  height: 36, borderRadius: 8, pointerEvents: 'none',
+                }}
+                transition={{ duration: 0.2, ease: [0.25, 1, 0.5, 1] }}
+              />
+            );
+          })}
+
+          {NAV_ITEMS.filter(i => i.section === 'workspace').map((item) => (
+            <NavItem
+              key={item.to}
+              item={item}
+              collapsed={collapsed}
+              paperCount={item.to === '/library' ? papers.length : undefined}
+              isLive={item.to === '/query'}
+              isOnline={isOnline}
+            />
+          ))}
         </div>
-        <div style={{ display: 'flex', gap: 8, fontSize: 10.5, color: 'var(--text-muted)' }}>
-          <span>{paper.chunk_count} chunks</span>
-          {paper.page_count > 0 && <span>{paper.page_count}pp</span>}
+
+        <div style={{ marginTop: 16 }}>
+          <SectionLabel label="System" collapsed={collapsed} />
+          {NAV_ITEMS.filter(i => i.section === 'system').map((item) => (
+            <NavItem key={item.to} item={item} collapsed={collapsed} isOnline={isOnline} />
+          ))}
         </div>
-      </div>
+      </nav>
 
-      {/* Checkbox */}
-      <div style={{
-        width: 16, height: 16, borderRadius: 4, flexShrink: 0, marginTop: 2,
-        border: `1.5px solid ${selected ? '#6366f1' : 'var(--border-light)'}`,
-        background: selected ? '#6366f1' : 'transparent',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        transition: 'all .12s',
-      }}>
-        {selected && (
-          <svg width="9" height="7" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="1,3.5 3.5,6 8,1" />
-          </svg>
-        )}
-      </div>
-    </button>
-  );
-}
-
-/* ── Helpers ── */
-function EmptyLibrary({ search, onUpload }: { search: string; onUpload: () => void }) {
-  if (search) return (
-    <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
-      No papers match "{search}"
-    </div>
-  );
-  return (
-    <div style={{ padding: 20, textAlign: 'center' }}>
-      <div style={{ fontSize: 28, marginBottom: 8 }}>📄</div>
-      <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12, lineHeight: 1.5 }}>
-        No papers indexed yet.<br />Upload a PDF to get started.
-      </p>
-      <button onClick={onUpload} style={{
-        background: 'var(--accent)', border: 'none', color: '#fff',
-        borderRadius: 6, padding: '6px 14px', cursor: 'pointer', fontSize: 12, fontWeight: 500,
-      }}>
-        Upload PDF
-      </button>
-    </div>
-  );
-}
-
-function LoadingSkeleton() {
-  return (
-    <div style={{ padding: '4px 4px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-      {[1, 2, 3].map(i => (
-        <div key={i} style={{ display: 'flex', gap: 10, padding: '8px 10px' }}>
-          <div className="skeleton" style={{ width: 30, height: 30, borderRadius: 6, flexShrink: 0 }} />
-          <div style={{ flex: 1 }}>
-            <div className="skeleton" style={{ height: 12, marginBottom: 6, width: '85%' }} />
-            <div className="skeleton" style={{ height: 10, width: '50%' }} />
+      {/* Status card */}
+      <div style={{ padding: 8, flexShrink: 0 }}>
+        {!collapsed ? (
+          <div style={{
+            background: 'var(--bg-raised)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 10, padding: 12,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+              <StatusDot online={isOnline} />
+              <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>
+                {isOnline ? 'API Online' : 'API Offline'}
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <Pill label={stats?.embedding_provider?.split('/').pop() ?? 'BGE-M3'} />
+              <Pill label={stats?.llm_provider?.split('/').pop() ?? 'Mistral'} />
+            </div>
           </div>
-        </div>
-      ))}
-    </div>
+        ) : (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: '4px 0' }}>
+            <StatusDot online={isOnline} />
+          </div>
+        )}
+
+        <button
+          onClick={() => setSidebarCollapsed(!collapsed)}
+          style={{
+            width: '100%', marginTop: 8,
+            display: 'flex', alignItems: 'center',
+            justifyContent: collapsed ? 'center' : 'flex-start',
+            gap: 6, padding: '6px 8px',
+            background: 'transparent', border: 'none',
+            borderRadius: 8, cursor: 'pointer',
+            color: 'var(--text-muted)', fontSize: 12,
+            transition: 'color 120ms, background 120ms',
+          }}
+          onMouseEnter={e => {
+            (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)';
+            (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-raised)';
+          }}
+          onMouseLeave={e => {
+            (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)';
+            (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+          }}
+          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          {collapsed
+            ? <ChevronRight size={14} />
+            : <><ChevronLeft size={14} /><span>Collapse</span></>
+          }
+        </button>
+      </div>
+    </motion.aside>
   );
 }
 
-function IconButton({ onClick, title, children }: { onClick: () => void; title: string; children: React.ReactNode }) {
+function SectionLabel({ label, collapsed }: { label: string; collapsed: boolean }) {
   return (
-    <button onClick={onClick} title={title} style={{
-      background: 'none', border: '1px solid var(--border)', borderRadius: 6,
-      color: 'var(--text-secondary)', cursor: 'pointer', padding: 5,
-      display: 'flex', alignItems: 'center',
+    <AnimatePresence>
+      {!collapsed && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.1 }}
+          style={{
+            fontSize: 10, fontWeight: 600,
+            color: 'var(--text-muted)',
+            letterSpacing: '0.12em',
+            textTransform: 'uppercase',
+            padding: '4px 8px 8px',
+          }}
+        >
+          {label}
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+function StatusDot({ online }: { online: boolean }) {
+  return (
+    <span
+      className={online ? 'status-pulse' : ''}
+      style={{
+        display: 'inline-block', width: 7, height: 7,
+        borderRadius: '50%',
+        background: online ? 'var(--emerald-500)' : 'var(--rose-500)',
+        flexShrink: 0,
+      }}
+    />
+  );
+}
+
+function Pill({ label }: { label: string }) {
+  return (
+    <span style={{
+      fontSize: 10, padding: '2px 6px',
+      background: 'var(--bg-overlay)',
+      color: 'var(--text-secondary)',
+      borderRadius: 6,
     }}>
-      {children}
-    </button>
+      {label}
+    </span>
   );
 }
 
-const scopeBtn: React.CSSProperties = {
-  background: 'var(--bg-input)', border: '1px solid var(--border)',
-  color: 'var(--text-secondary)', borderRadius: 5, padding: '3px 8px',
-  cursor: 'pointer', fontSize: 11,
-};
-
-function hashColor(id: string): string {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
-  const colors = ['#6366f1','#8b5cf6','#ec4899','#14b8a6','#f59e0b','#3b82f6','#10b981','#ef4444'];
-  return colors[Math.abs(h) % colors.length];
+interface NavItemProps {
+  item: (typeof NAV_ITEMS)[number];
+  collapsed: boolean;
+  paperCount?: number;
+  isLive?: boolean;
+  isOnline?: boolean;
 }
 
-function RefreshIcon() {
+function NavItem({ item, collapsed, paperCount, isLive, isOnline }: NavItemProps) {
+  const location = useLocation();
+  const isActive = location.pathname === item.to ||
+    (item.to !== '/' && location.pathname.startsWith(item.to));
+  const Icon = item.icon;
+
   return (
-    <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-      <path d="M11 4.5A5 5 0 1 0 12 8" /><polyline points="12,1 12,4.5 8.5,4.5" />
-    </svg>
-  );
-}
-function UploadIcon() {
-  return (
-    <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17,8 12,3 7,8"/><line x1="12" y1="3" x2="12" y2="15"/>
-    </svg>
-  );
-}
-function SearchIcon({ style }: { style?: React.CSSProperties }) {
-  return (
-    <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={style}>
-      <circle cx="6" cy="6" r="4"/><line x1="9.5" y1="9.5" x2="13" y2="13"/>
-    </svg>
+    <NavLink
+      to={item.to}
+      end={item.to === '/'}
+      style={{
+        display: 'flex', alignItems: 'center',
+        gap: 8,
+        padding: collapsed ? '9px 0' : '9px 8px',
+        justifyContent: collapsed ? 'center' : 'flex-start',
+        borderRadius: 8,
+        textDecoration: 'none',
+        color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
+        position: 'relative',
+        marginBottom: 2,
+        borderLeft: isActive ? '2px solid var(--brand-500)' : '2px solid transparent',
+        transition: 'color 120ms',
+        minHeight: 36,
+      }}
+    >
+      {isActive && (
+        <span style={{
+          position: 'absolute', left: -1, top: '50%', transform: 'translateY(-50%)',
+          width: 4, height: 4, borderRadius: '50%',
+          background: 'var(--brand-500)',
+          boxShadow: '0 0 6px var(--brand-500)',
+        }} />
+      )}
+
+      <Icon
+        size={18}
+        style={{ color: isActive ? 'var(--brand-400)' : 'inherit', flexShrink: 0 }}
+      />
+
+      <AnimatePresence>
+        {!collapsed && (
+          <motion.span
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.1 }}
+            style={{
+              fontSize: 13,
+              fontWeight: isActive ? 500 : 400,
+              overflow: 'hidden',
+              whiteSpace: 'nowrap',
+              flex: 1,
+            }}
+          >
+            {item.label}
+          </motion.span>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {!collapsed && paperCount !== undefined && paperCount > 0 && (
+          <motion.span
+            initial={{ scale: 0.5, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.5, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 15 }}
+            style={{
+              fontSize: 10, fontWeight: 600,
+              background: 'rgba(99,102,241,0.2)',
+              color: 'var(--brand-300)',
+              padding: '1px 6px',
+              borderRadius: 999,
+            }}
+          >
+            {paperCount}
+          </motion.span>
+        )}
+      </AnimatePresence>
+
+      {!collapsed && isLive && (
+        <span
+          className={isOnline ? 'status-pulse' : ''}
+          style={{
+            width: 6, height: 6, borderRadius: '50%',
+            background: isOnline ? 'var(--emerald-500)' : 'var(--rose-500)',
+            flexShrink: 0,
+          }}
+        />
+      )}
+    </NavLink>
   );
 }

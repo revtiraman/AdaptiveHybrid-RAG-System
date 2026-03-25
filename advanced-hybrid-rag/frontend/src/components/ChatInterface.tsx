@@ -9,7 +9,8 @@ export default function ChatInterface() {
 	const [filterMode, setFilterMode] = useState<"all" | "issues" | "retried">("all");
 	const { events, connect, close, connected } = useStream();
 
-	const formatScore = (value?: number) => (typeof value === "number" ? value.toFixed(2) : null);
+	const formatScorePercent = (value?: number) =>
+		typeof value === "number" ? `${(value * 100).toFixed(1)}/100` : null;
 
 	useEffect(() => {
 		if (events.length === 0) return;
@@ -112,14 +113,14 @@ export default function ChatInterface() {
 										retries {m.correctiveIterations}
 									</span>
 								)}
-								{formatScore(m.retrievalQuality) && (
+								{formatScorePercent(m.retrievalQuality) && (
 									<span style={{ padding: "2px 8px", borderRadius: 999, background: "#dbeafe", color: "#1e3a8a", fontSize: 12 }}>
-										quality {formatScore(m.retrievalQuality)}
+										quality {formatScorePercent(m.retrievalQuality)}
 									</span>
 								)}
-								{formatScore(m.groundingScore) && (
+								{formatScorePercent(m.groundingScore) && (
 									<span style={{ padding: "2px 8px", borderRadius: 999, background: "#dcfce7", color: "#166534", fontSize: 12 }}>
-										grounding {formatScore(m.groundingScore)}
+										grounding {formatScorePercent(m.groundingScore)}
 									</span>
 								)}
 							</div>

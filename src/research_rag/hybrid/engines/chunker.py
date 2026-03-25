@@ -41,17 +41,34 @@ class SectionAwareChunker:
             lines = str(page["text"] or "").splitlines()
 
             sentences_buffer: list[str] = []
+            # Accumulate non-heading lines into paragraph blocks so that
+            # sentences spanning multiple PDF lines are joined before splitting.
+            pending_lines: list[str] = []
             for line in lines:
                 normalized_line = self._clean_line_text(line)
                 if not normalized_line:
+                    # Blank line = paragraph boundary; flush pending lines
+                    if pending_lines:
+                        block = " ".join(pending_lines)
+                        sentences_buffer.extend(self._split_sentences(block))
+                        pending_lines = []
                     continue
 
                 detected_section = self._detect_section_heading(normalized_line)
                 if detected_section:
+                    if pending_lines:
+                        block = " ".join(pending_lines)
+                        sentences_buffer.extend(self._split_sentences(block))
+                        pending_lines = []
                     current_section = detected_section
                     continue
 
-                sentences_buffer.extend(self._split_sentences(normalized_line))
+                pending_lines.append(normalized_line)
+
+            # Flush any remaining lines at end of page
+            if pending_lines:
+                block = " ".join(pending_lines)
+                sentences_buffer.extend(self._split_sentences(block))
 
             for chunk_text in self._build_sentence_chunks(sentences_buffer):
                 chunks.append(self._build_chunk(paper_id, page_number, current_section, ordinal, chunk_text))

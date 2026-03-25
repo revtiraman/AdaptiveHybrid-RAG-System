@@ -8,27 +8,24 @@ export interface Paper {
 }
 
 export interface Citation {
-  paper_id: string;
   chunk_id: string;
+  paper_id: string;
   page_number: number;
   section: string;
+  text?: string;
 }
 
 export interface Claim {
   claim: string;
+  confidence: number;
   citations: Citation[];
-}
-
-export interface VerificationIssue {
-  type: string;
-  detail: string;
 }
 
 export interface Verification {
   supported: boolean;
   confidence: number;
   unsupported_claims: string[];
-  issues: VerificationIssue[];
+  issues: Array<{ type: string; detail: string }>;
   stage_scores: Record<string, number>;
 }
 
@@ -71,14 +68,12 @@ export interface SystemStats {
 }
 
 export interface UploadResult {
-  status: string;
   paper: {
     paper_id: string;
     title: string;
     page_count: number;
     chunk_count: number;
     claims_extracted: number;
-    extraction_quality_score: number;
   };
 }
 
@@ -92,4 +87,15 @@ export interface Message {
   error?: string;
   isLoading?: boolean;
   timestamp: Date;
+}
+
+export interface QueryHistoryEntry {
+  id: string;
+  timestamp: string;
+  question: string;
+  paperIds: string[];
+  answer: string;
+  latencyMs: number;
+  retrievalQuality: number;
+  verified: boolean;
 }

@@ -174,6 +174,8 @@ def clean_extracted_text(text: str) -> str:
     text = unicodedata.normalize("NFKC", text)
     text = text.replace("\u00ad", "")
     text = text.replace("\u200b", "").replace("\ufeff", "")
+    # Dehyphenate: join words split at end-of-line with a hyphen (PDF artifact)
+    text = re.sub(r"([a-zA-Z])-\s*\n\s*([a-z])", r"\1\2", text)
     text = re.sub(r"\s+", " ", text)
     text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
     text = re.sub(r"([.,;:!?])([A-Za-z])", r"\1 \2", text)

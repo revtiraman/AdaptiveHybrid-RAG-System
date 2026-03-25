@@ -24,11 +24,14 @@ class HybridRetrievalEngine:
         paper_ids: list[str] | None = None,
         filters: dict[str, object] | None = None,
         per_section_cap: int = 3,
+        dense_query: str | None = None,
     ) -> list[RetrievalCandidate]:
         filters = filters or {}
+        # dense_query: HyDE text for vector search; query used for BM25/terms
+        embedding_text = dense_query if dense_query else query
         query_terms = self._expanded_query_terms(query)
         section_weights = self._section_intent_weights(query)
-        query_embedding = self.embedder.embed([query])[0]
+        query_embedding = self.embedder.embed([embedding_text])[0]
 
         vector_items = self.vector_store.query(query_embedding, top_k=top_k * 3, paper_ids=paper_ids)
         claim_items = self.vector_store.query_claims(query_embedding, top_k=top_k * 3, paper_ids=paper_ids)

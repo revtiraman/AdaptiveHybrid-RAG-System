@@ -5,6 +5,7 @@ import { useRAGStore } from "../store/ragStore";
 export default function ReasoningTrace() {
 	const { messages, planningSteps } = useRAGStore();
 	const last = [...messages].reverse().find((m) => m.role === "assistant");
+	const scorePct = (value?: number) => (typeof value === "number" ? `${(value * 100).toFixed(1)}/100` : null);
 	const adaptiveSignals = (last?.reasoningTrace ?? []).filter((t) => t.startsWith("adaptive_retry="));
 	const adaptiveWarnings = (last?.warnings ?? []).filter((w) => w.toLowerCase().includes("adaptive retry") || w.toLowerCase().includes("corrective labels"));
 	const entries = useMemo(() => {
@@ -37,8 +38,8 @@ export default function ReasoningTrace() {
 				>
 					<div style={{ display: "flex", flexWrap: "wrap", gap: 10, fontSize: 13 }}>
 						<span>Retries: <strong>{last.correctiveIterations ?? 0}</strong></span>
-						{typeof last.retrievalQuality === "number" && <span>Retrieval quality: <strong>{last.retrievalQuality.toFixed(2)}</strong></span>}
-						{typeof last.groundingScore === "number" && <span>Grounding score: <strong>{last.groundingScore.toFixed(2)}</strong></span>}
+						{scorePct(last.retrievalQuality) && <span>Retrieval quality: <strong>{scorePct(last.retrievalQuality)}</strong></span>}
+						{scorePct(last.groundingScore) && <span>Grounding score: <strong>{scorePct(last.groundingScore)}</strong></span>}
 					</div>
 					{adaptiveSignals.length > 0 && (
 						<p style={{ margin: "8px 0 0 0", color: "#1f2937", fontSize: 13 }}>

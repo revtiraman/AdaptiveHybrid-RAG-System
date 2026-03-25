@@ -28,6 +28,30 @@ class ReasoningEngine:
             return QueryPlan(query_type="multi_hop", hops=hops)
         return QueryPlan(query_type="simple", hops=[question])
 
+    def generate_hyde_query(self, question: str) -> str:
+        """HyDE: generate a hypothetical answer passage, then embed it for retrieval.
+        The hypothetical passage lives in the same semantic space as real paper text,
+        dramatically improving dense retrieval recall."""
+        if not self.llm_client:
+            return question
+        try:
+            response = self.llm_client.complete_json(
+                instructions=(
+                    "You are a research paper expert. Write a short 80-120 word passage "
+                    "that would be a paragraph from a research paper perfectly answering "
+                    "the question. Use specific technical terms, methods, and results as "
+                    "they would appear in an academic paper. "
+                    "Return JSON: {\"passage\": \"...\"}"
+                ),
+                prompt=question,
+            )
+            passage = str(response.get("passage", "")).strip()
+            if passage and len(passage) > 30:
+                return passage
+        except Exception:
+            pass
+        return question
+
     def decompose_multi_hop(self, question: str) -> list[str]:
         if self.llm_client:
             try:
