@@ -1,42 +1,48 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Routes, Route } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
+import TopBar from './components/TopBar';
+import AmbientBackground from './ui/components/AmbientBackground';
 import Dashboard from './pages/Dashboard';
 import Library from './pages/Library';
 import QueryInterface from './pages/QueryInterface';
+import Analytics from './pages/Analytics';
 import Settings from './pages/Settings';
 
 export default function App() {
-  const [uploadModalOpen, setUploadModalOpen] = useState(false);
-
   return (
-    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--bg-base)' }}>
-      {/* Fixed left sidebar */}
-      <Sidebar
-        uploadModalOpen={uploadModalOpen}
-        setUploadModalOpen={setUploadModalOpen}
-      />
+    <>
+      {/* Full-page ambient background — sits behind everything */}
+      <AmbientBackground />
 
-      {/* Main content */}
-      <div
-        className="scroll-area"
-        style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column', minWidth: 0 }}
-      >
-        <Routes>
-          <Route path="/" element={<Dashboard onUploadClick={() => setUploadModalOpen(true)} />} />
-          <Route
-            path="/library"
-            element={
-              <Library
-                uploadModalOpen={uploadModalOpen}
-                setUploadModalOpen={setUploadModalOpen}
-              />
-            }
-          />
-          <Route path="/query" element={<QueryInterface />} />
-          <Route path="/settings" element={<Settings />} />
-        </Routes>
+      <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
+        {/* Fixed sidebar */}
+        <Sidebar />
+
+        {/* Main content column */}
+        <div style={{
+          flex: 1, minWidth: 0,
+          display: 'flex', flexDirection: 'column',
+          overflow: 'hidden',
+        }}>
+          {/* Sticky top bar */}
+          <TopBar />
+
+          {/* Page content */}
+          <div
+            className="scroll-area"
+            style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}
+          >
+            <Routes>
+              <Route path="/"          element={<Dashboard />} />
+              <Route path="/library"   element={<Library />} />
+              <Route path="/query"     element={<QueryInterface />} />
+              <Route path="/analytics" element={<Analytics />} />
+              <Route path="/settings"  element={<Settings />} />
+            </Routes>
+          </div>
+        </div>
       </div>
-    </div>
+    </>
   );
 }
