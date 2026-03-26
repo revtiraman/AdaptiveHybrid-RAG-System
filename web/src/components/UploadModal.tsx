@@ -150,7 +150,7 @@ export default function UploadModal({ open, onClose, onSuccess }: Props) {
                 <motion.div key="drop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                   <DropZone
                     isDragOver={isDragOver}
-                    onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                    onDragOver={(e: React.DragEvent) => { e.preventDefault(); setDragOver(true); }}
                     onDragLeave={() => setDragOver(false)}
                     onDrop={handleDrop}
                     onClick={() => inputRef.current?.click()}

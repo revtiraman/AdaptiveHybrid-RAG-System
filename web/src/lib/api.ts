@@ -79,6 +79,9 @@ export const api = {
     });
   },
 
+  deletePaper: (paperId: string): Promise<void> =>
+    request<void>(`/papers/${paperId}`, { method: 'DELETE' }),
+
   chunkSample: (paper_id: string) =>
     request<{ paper_id: string; title: string; sample_count: number; chunks: unknown[] }>(
       '/debug/chunk-sample',

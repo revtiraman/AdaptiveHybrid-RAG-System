@@ -15,7 +15,6 @@ import UploadModal from '../components/UploadModal';
 type SortKey = 'newest' | 'oldest' | 'chunks' | 'alpha';
 type ViewMode = 'grid' | 'list';
 
-const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8000';
 
 export default function Library() {
   const navigate = useNavigate();
@@ -60,7 +59,7 @@ export default function Library() {
   const handleDelete = async (paperId: string) => {
     if (!confirm('Delete this paper?')) return;
     try {
-      await fetch(`${API_BASE}/papers/${paperId}`, { method: 'DELETE' });
+      await api.deletePaper(paperId);
       queryClient.invalidateQueries({ queryKey: ['papers'] });
       addNotification({ type: 'info', title: 'Paper deleted', description: 'Paper removed from index.' });
     } catch {
