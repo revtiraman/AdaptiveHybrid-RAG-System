@@ -329,3 +329,14 @@ class MetadataStore:
             "noisy_chunk_count": noisy_chunks,
             "sections": sections,
         }
+
+    def delete_paper(self, paper_id: str) -> bool:
+        """Delete a paper and all its associated data. Returns True if the paper existed."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT 1 FROM papers WHERE paper_id = ?", (paper_id,)).fetchone()
+            if row is None:
+                return False
+            conn.execute("DELETE FROM claims WHERE paper_id = ?", (paper_id,))
+            conn.execute("DELETE FROM chunks WHERE paper_id = ?", (paper_id,))
+            conn.execute("DELETE FROM papers WHERE paper_id = ?", (paper_id,))
+        return True

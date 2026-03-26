@@ -246,6 +246,11 @@ class HybridRAGSystem:
             for p in self.metadata_store.list_papers()
         ]
 
+    def delete_paper(self, paper_id: str) -> bool:
+        """Delete a paper from both vector store and metadata store. Returns True if it existed."""
+        self.vector_store.delete_by_paper(paper_id)
+        return self.metadata_store.delete_paper(paper_id)
+
     def stats(self) -> HybridSystemStats:
         papers = len(self.metadata_store.list_papers())
         chunks = self.metadata_store.count_chunks()

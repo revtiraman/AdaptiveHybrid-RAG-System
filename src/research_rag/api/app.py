@@ -161,6 +161,14 @@ def create_app() -> FastAPI:
         container = _container(request)
         return {"papers": container.system.list_papers()}
 
+    @app.delete("/papers/{paper_id}")
+    async def delete_paper(request: Request, paper_id: str) -> dict[str, Any]:
+        container = _container(request)
+        existed = container.system.delete_paper(paper_id)
+        if not existed:
+            raise HTTPException(status_code=404, detail=f"Paper not found: {paper_id}")
+        return {"status": "deleted", "paper_id": paper_id}
+
     @app.get("/stats")
     async def stats(request: Request) -> dict[str, Any]:
         container = _container(request)
