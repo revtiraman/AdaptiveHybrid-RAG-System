@@ -120,19 +120,6 @@ class VectorStore:
             include=["metadatas", "documents", "distances"],
         )
 
-    def delete_by_paper(self, paper_id: str) -> None:
-        """Remove all chunk and claim vectors for a given paper from ChromaDB."""
-        if self._collection is not None:
-            try:
-                self._collection.delete(where={"paper_id": paper_id})
-            except Exception:
-                pass
-        if self._claims_collection is not None:
-            try:
-                self._claims_collection.delete(where={"paper_id": paper_id})
-            except Exception:
-                pass
-
         ids = response.get("ids", [[]])[0]
         metadatas = response.get("metadatas", [[]])[0]
         documents = response.get("documents", [[]])[0]
@@ -155,3 +142,16 @@ class VectorStore:
                 }
             )
         return items
+
+    def delete_by_paper(self, paper_id: str) -> None:
+        """Remove all chunk and claim vectors for a given paper from ChromaDB."""
+        if self._collection is not None:
+            try:
+                self._collection.delete(where={"paper_id": paper_id})
+            except Exception:
+                pass
+        if self._claims_collection is not None:
+            try:
+                self._claims_collection.delete(where={"paper_id": paper_id})
+            except Exception:
+                pass

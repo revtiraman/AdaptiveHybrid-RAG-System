@@ -94,7 +94,7 @@ class HybridRAGSettings:
             sqlite_path=_resolve_path(_env("RAG_SQLITE_PATH", str(data_dir / "rag_metadata.sqlite3")), root),
             chroma_path=_resolve_path(_env("RAG_CHROMA_PATH", str(data_dir / "chroma")), root),
             chroma_collection=_env("RAG_CHROMA_COLLECTION", "paper_chunks"),
-            embedding_model=_env("RAG_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5"),
+            embedding_model=_env("RAG_EMBEDDING_MODEL", "BAAI/bge-large-en-v1.5"),
             reranker_model=_env("RAG_RERANKER_MODEL", "BAAI/bge-reranker-base"),
             llm_provider=_env("LLM_PROVIDER", "openrouter"),
             openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),

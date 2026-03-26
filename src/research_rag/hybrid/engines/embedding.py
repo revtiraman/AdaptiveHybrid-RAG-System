@@ -19,7 +19,7 @@ class BGEEmbedder:
     def __init__(self, model_name: str) -> None:
         self.model_name = model_name
         self._model = None
-        self._fallback_dimension = 384
+        self._fallback_dimension = 1024
 
         try:
             from sentence_transformers import SentenceTransformer
